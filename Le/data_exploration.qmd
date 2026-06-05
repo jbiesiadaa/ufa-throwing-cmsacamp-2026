@@ -1,0 +1,137 @@
+Import and load the dataset:
+
+```{r}
+rm(list = ls())
+
+library(tidyverse)
+
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+head(ufa_throws)
+```
+
+Relationship of each variable to whether a throw results in a goal:
+
+```{r}
+goal_throws <- ufa_throws |>
+  filter(goal == 1)
+
+failed_throws <- ufa_throws |>
+  filter(goal == 0 & turnover == 1)
+
+pass_throws <- ufa_throws |>
+  filter(goal == 0 & turnover == 0)
+
+goal_throws
+failed_throws
+pass_throws
+```
+
+Goal distance histogram (goal vs no goal):
+
+```{r}
+goal_throws |>
+  ggplot(aes(x = throw_distance)) +
+  geom_histogram()
+
+failed_throws |>
+  ggplot(aes(x = throw_distance)) +
+  geom_histogram()
+
+pass_throws |>
+  ggplot(aes(x = throw_distance)) +
+  geom_histogram()
+```
+
+```{r}
+goal_throws |>
+  ggplot(aes(x = throw_angle)) +
+  geom_histogram() +
+  coord_polar()
+
+failed_throws |>
+  ggplot(aes(x = throw_angle)) +
+  geom_histogram() +
+  coord_polar()
+
+pass_throws |>
+  ggplot(aes(x = throw_angle)) +
+  geom_histogram() +
+  coord_polar()
+```
+
+Coordinates of goal starting and ending points:
+
+```{r}
+# Scatter plot does not make too much sense
+goal_throws |>
+  ggplot(aes(x = thrower_x, y = thrower_y)) +
+  geom_point() +
+  coord_fixed() +
+  scale_x_continuous(limits = c(min(ufa_throws$thrower_x), max(ufa_throws$thrower_x))) +
+  scale_y_continuous(limits = c(0, 120))
+```
+
+```{r}
+# What about box plots?
+goal_throws |>
+  ggplot(aes(x = thrower_x)) +
+  geom_boxplot() +
+  scale_x_continuous(limits = c(-30, 30))
+
+goal_throws |>
+  ggplot(aes(y = thrower_y)) +
+  geom_boxplot() +
+  scale_y_continuous(limits = c(0, 120))
+```
+
+How many throws lead to a goal?
+
+```{r}
+goal_throws |>
+  ggplot(aes(x = possession_throw)) +
+  stat_ecdf() +
+  scale_x_continuous(breaks = seq(0, 65, 5))
+
+# Around 70% of goals are created with <= 10 throws, and >50% of goals are created with <= 8 throws
+```
+
+
+Drawing arrows in ggplot2: `geom_segment`:
+https://r-graph-gallery.com/415-arrows-in-ggplot-graph.html
+
+```{r}
+goal_throws |>
+  # Filter for a specific match for simplicity
+  # Can uncomment the filter lines if needed
+  filter(gameID == "2023-06-24-DC-BOS") |>
+  ggplot() +
+  geom_segment(aes(x = thrower_x, y = thrower_y,
+                   xend = receiver_x, yend = receiver_y),
+               arrow = arrow(), linewidth = 0.5) +
+  coord_fixed()
+```
+
+Probability from scoring a goal and making a turnover from a certain coordinate along the y-axis:
+
+```{r}
+ufa_goal_turnover <- ufa_throws |>
+  select(thrower_y, goal, turnover) |>
+  mutate(zone = case_when(0 <= thrower_y & thrower_y <= 20 ~ "own_end_zone",
+                          thrower_y > 20 & thrower_y <= 55 ~ "before_midpoint",
+                          thrower_y > 55 ~ "after_midpoint"))
+
+goal_from_zones <- ufa_goal_turnover |>
+  select(zone, goal) |>
+  group_by(zone) |>
+  summarize(total_goals = sum(goal)) |>
+  mutate(proportion = total_goals / sum(total_goals))
+
+turnover_from_zones <- ufa_goal_turnover |>
+  select(zone, turnover) |>
+  group_by(zone) |>
+  summarize(total_turnovers = sum(turnover)) |>
+  mutate(proportion = total_turnovers / sum(total_turnovers))
+
+goal_from_zones
+turnover_from_zones
+```
