@@ -1,0 +1,73 @@
+---
+title: "test-du"
+format: html
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+ufa_throws <- read_csv("https://raw.githubusercontent.com/BradenEberhard/Expected-Throwing-Value/refs/heads/main/data/all_games_1024.csv")
+
+ufa_throws <- ufa_throws |> 
+  mutate(
+    goal = ifelse(receiver_y > 100 & turnover == 0, 1, 0),
+    throw_distance = sqrt((receiver_x - thrower_x) ^ 2 + (receiver_y - thrower_y) ^ 2),
+    x_diff = receiver_x - thrower_x,
+    y_diff = receiver_y - thrower_y,
+    throw_angle = atan2(y_diff, x_diff)
+  ) |> 
+  select(-quarter_point, -total_points, -current_line)
+
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+```
+
+# EDA 
+
+## Game
+gameID, possession_num, possession_throw, game_quarter, home_team_score, away_team_score, home_teamID, away_teamID, home_team_win (whether home team wins), score_diff (between home and away teams)
+
+```{r}
+ufa_throws |>
+  filter(goal == 0 & turnover == 1) # intermediate passing throw, neither turnover nor goal (when turnover = 0, a throw could result in either a goal or a regular passing. When turnover = 1, this means the throw could not result in a goal)
+
+thrower_turnover <- ufa_throws |>
+  mutate(date_clean = as_date(str_sub(gameID, 1, 10)),
+         year = year(date_clean),
+         month = month(date_clean)) |>
+  group_by(year, thrower) |>
+  summarize(num_turnover_in_a_season = sum(turnover)) |>
+  ungroup() 
+
+thrower_game <- ufa_throws|>
+  mutate(date_clean = as_date(str_sub(gameID, 1, 10)),
+         year = year(date_clean),
+         month = month(date_clean)) |>
+  group_by(year, thrower) |>
+  summarize(num_game_in_a_season = n_distinct(gameID)) |>
+  ungroup()
+
+left_join(thrower_turnover, thrower_game, by = c("thrower", "year")) |>
+  mutate(avg_turnover_per_game = num_turnover_in_a_season/num_game_in_a_season)
+  
+thrower_turnover |>
+  ggplot(aes(x = avg_turnover_per_game)) +
+  geom_histogram() + 
+  labs(title = "Distribution of Average Thrower Turnover per Game")
+```
+
+```{r}
+ufa_throws <- ufa_throws |>
+  left_join(thrower_turnover, by = "thrower") |>
+  relocate(avg_turnover_per_game)
+
+ufa_throws |>
+  group_by(home_teamID) |>
+  arrange(desc(avg_turnover_per_game), .by_group = TRUE) |>
+  ggplot(aes(x = ))
+```
+
+## Individual throwers/receivers
+thrower, thrower_x, thrower_y, receiver, receiver_x, receiver_y
+
+## Throw (results in goal/turnover, angle)
+turnover, game_quarter, is_home_team, times (game time remaining in seconds), throw_distance, x_diff, y_diff, throw_angle 
