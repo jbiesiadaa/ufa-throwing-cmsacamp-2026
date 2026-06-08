@@ -1,3 +1,9 @@
+---
+title: "01_data_exploration"
+format: html
+editor: source
+---
+
 ## **EXPLANATORY DATA ANALYSIS (EDA) PROJECT: UFA THROWING STATISTICS**
 
 ## *Carnegie Mellon Sports Analytics Camp (CMSACamp) 2026*
@@ -117,6 +123,54 @@ goal_throws |>
   coord_fixed()
 ```
 
+What about a particular sequence of shots that lead to a goal?
+
+```{r}
+ufa_throws |>
+  filter(gameID == "2023-06-24-DC-BOS" & times >= 2815) |>
+  ggplot() +
+  geom_segment(aes(x = thrower_x, y = thrower_y,
+                   xend = receiver_x, yend = receiver_y),
+               arrow = arrow(), linewidth = 0.5) +
+  coord_fixed()
+```
+
+Try creating a heat map of position of goal throws by quarter:
+
+```{r}
+# https://sportscidata.com/2019/03/26/how-to-create-gps-heatmaps-in-ggplot/
+# https://r-charts.com/correlation/contour-plot-ggplot2/
+
+goal_throws |>
+  ggplot(aes(x = thrower_x, y = thrower_y)) +
+  geom_density_2d_filled() +
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3)) +
+  #scale_y_continuous(limits = c(0, 120)) +
+  # Here we zoom in the "after-midpoint" position of the field
+  scale_y_continuous(limits = c(60, 110)) +
+  coord_fixed() + scale_fill_viridis_d() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = 100, color = "white") +
+  facet_wrap(~ game_quarter, nrow = 2, ncol = 3)
+```
+
+Now do the same with the throws that make a turnover:
+
+```{r}
+failed_throws |>
+  ggplot() +
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y)) +
+  geom_point(aes(x = receiver_x, y = receiver_y), color = "red",
+             alpha = 0.2, shape = 4, size = 0.5) +
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3)) +
+  scale_y_continuous(limits = c(0, 120)) +
+  coord_fixed() + scale_fill_viridis_d() +
+  theme(legend.position = "none") +
+  geom_hline(yintercept = 20, color = "white") +
+  geom_hline(yintercept = 100, color = "white") +
+  facet_wrap(~ game_quarter, nrow = 1, ncol = 6)
+```
+
 Probability from scoring a goal and making a turnover from a certain coordinate along the y-axis:
 
 ```{r}
@@ -142,14 +196,85 @@ goal_from_zones
 turnover_from_zones
 ```
 
+Throw distance based on the current team's lead:
+
+```{r}
+throw_dist_lead <- ufa_throws |>
+  # Select both successful and unsuccessful throws
+  select(throw_distance, is_home_team, score_diff) |>
+  # Note that score_diff = score_home - score_away.
+  # If the current team is not the home team, then we need to flip the signs
+  mutate(adjusted_score_diff =
+           case_when(is_home_team == TRUE ~ score_diff,
+                     is_home_team == FALSE ~ (-1) * score_diff)) |>
+  # Compute the median throwing distance with each score difference
+  select(adjusted_score_diff, throw_distance) |>
+  group_by(adjusted_score_diff) |>
+  summarize(median_throw_distance = median(throw_distance))
+
+throw_dist_lead
+
+throw_dist_lead |>
+  ggplot(aes(x = adjusted_score_diff, y = median_throw_distance)) +
+  geom_point() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_smooth()
+```
+
+What if we only keep the successful throws?
+
+```{r}
+adjusted_throw_dist_lead <- ufa_throws |>
+  filter(turnover == 0) |>
+  select(throw_distance, is_home_team, score_diff) |>
+  # Note that score_diff = score_home - score_away.
+  # If the current team is not the home team, then we need to flip the signs
+  mutate(adjusted_score_diff =
+           case_when(is_home_team == TRUE ~ score_diff,
+                     is_home_team == FALSE ~ (-1) * score_diff)) |>
+  # Compute the median throwing distance with each score difference
+  select(adjusted_score_diff, throw_distance) |>
+  group_by(adjusted_score_diff) |>
+  summarize(median_throw_distance = median(throw_distance))
+
+adjusted_throw_dist_lead
+
+adjusted_throw_dist_lead |>
+  ggplot(aes(x = adjusted_score_diff, y = median_throw_distance)) +
+  geom_point() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_smooth()
+```
+
+What if we adjust the dataset so that we are interested in how much higher up the field that the throw progressed?
+
+```{r}
+adjusted_throw_dist_lead_2 <- ufa_throws |>
+  select(y_diff, is_home_team, score_diff) |>
+  mutate(adjusted_score_diff =
+           case_when(is_home_team == TRUE ~ score_diff,
+                     is_home_team == FALSE ~ (-1) * score_diff)) |>
+  # Compute the median throwing distance with each score difference
+  select(adjusted_score_diff, y_diff) |>
+  group_by(adjusted_score_diff) |>
+  summarize(mean_y_diff = mean(y_diff))
+
+adjusted_throw_dist_lead_2
+
+adjusted_throw_dist_lead_2 |>
+  ggplot(aes(x = adjusted_score_diff, y = mean_y_diff)) +
+  geom_point() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red", linewidth = 1) +
+  geom_smooth()
+```
+
 Most of the failed passes (leading to the turnover) come before the midpoint, while the vast majority of the goal comes after the midpoint!
 
-=> How can teams break through the midpoint to score goals?
+=\> How can teams break through the midpoint to score goals?
 
 Note that field dimensions in ultimate frisbee may differ by tournaments and styles of play. In UFA, the field is 53+(1/3) yards wide and 80 yards long plus 20 yard endzones.
 
-The UFA rulebook:
-https://watchufa.com/sites/default/files/UFA%20Rule%20Book%202024%20v12.0.pdf
+The UFA rulebook: https://watchufa.com/sites/default/files/UFA%20Rule%20Book%202024%20v12.0.pdf
 
 #### 2. Exploring team results data
 
@@ -183,8 +308,7 @@ match_data
 summary(match_data$game_full_date)
 ```
 
-June 4, 2021 is the first day of regular season of the 2021 season.
-August 24, 2024 is the championship game of the 2024 season.
+June 4, 2021 is the first day of regular season of the 2021 season. August 24, 2024 is the championship game of the 2024 season.
 
 https://www.watchufa.com/league/news/2021-audl-game-preview-week-1-minnesota-wind-chill-madison-radicals
 
@@ -282,17 +406,21 @@ overall_stats_win_pct |>
   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
 ```
 
-Does a team perform better in certain times of the year or certain periods of the season? [TO BE UPDATED]
-
 #### 3. Proposed questions
 
 1.  Which direction of attack (i.e. to the right or left side of the field) has more chances of scoring a goal? Does this vary across teams?
 
 2.  What makes a team attempt further throws, or attempt to score goals with fewer passes? Is it the time pressure (little time left in quarter or the match), or the score pressure (being led by so many points)?
 
-3.  For all team's possession period that builds up from before the midpoint and passing through the midpoint, how likely is a team to score goals afterwards?
+3.  For all teams' possession period that builds up from before the midpoint and passing through the midpoint, how likely is a team to score goals afterwards?
 
-4.  [TO BE UPDATED] Can explore questions on how a particular team's throwing strategies evolved over time, or how a particular tournament-wide statistic has changed over time.
+4.  Explore questions on how a particular team's throwing strategies evolved over time, or how a particular tournament-wide statistic has changed over time:
+
+- Number of throws that make a goal / throw distance of a goal / total time that it takes for teams to score goals
+- Whether teams attack more on the left wing or on the right wing
+- Locations of turnovers (how far has a team gone up the field when they made a turnover?)
+
+"Over time" can mean comparing between quarters, between different seasons, or between regular season and playoffs (need additional research and data processing).
 
 5.  Clustering analysis: Cluster teams by the attacking strategy (starting vertical half, ending vertical half, number of times that the team switch vertical halves).
 

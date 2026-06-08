@@ -1,0 +1,165 @@
+---
+title: "02_throw_position_data"
+format: html
+editor: source
+---
+
+#### 0. Importing the dataset
+
+```{r}
+rm(list = ls())
+
+library(tidyverse)
+
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+
+ufa_throws
+```
+
+```{r}
+# Flipping the dataset so that positive x is the right side and negative x is the left side
+ufa_throws <- ufa_throws |>
+  mutate(thrower_x = (-1) * thrower_x,
+         receiver_x = (-1) * receiver_x,
+         throw_distance = sqrt((receiver_x-thrower_x)^2 + (receiver_y-thrower_y)^2),
+         x_diff = receiver_x - thrower_x,
+         throw_angle = atan2(y_diff, x_diff))
+
+ufa_throws
+```
+
+```{r}
+# Filtering for successful throws
+successful_throws <- ufa_throws |>
+  filter(turnover == 0)
+
+successful_throws
+```
+
+#### Main question:
+
+**Which direction of attack (i.e. to the right or left side of the field) has more chances of scoring a goal? Does this vary across teams?**
+
+See the `01_data_exploration.qmd` files for:
+
+- Heat map for the directions of scoring a goal (faceted by quarter)
+- Example of a sequence of throws that lead to a goal
+
+Note: A sequence of throws eventually leading to a turnover/goal is (hopefully) uniquely determined by the following variables:
+
+- Possession number
+- Game quarter
+- Team in possession (`if_home_team`)
+- Current scores of home and away teams
+- Game ID
+
+#### 1. Number of throws made in a particular wing of the field or crossed the midfield (successful throws only)
+
+```{r}
+successful_throws |>
+  mutate(throw_path_type = case_when(
+    (thrower_x >= 0) & (receiver_x >= 0) ~ "right_wing",
+    (thrower_x <= 0) & (receiver_x <= 0) ~ "left_wing",
+    (thrower_x >= 0) & (receiver_x <= 0) ~ "right_to_left",
+    (thrower_x <= 0) & (receiver_x >= 0) ~ "left_to_right"
+  )) |>
+  count(throw_path_type) |>
+  mutate(prop = n / sum(n))
+```
+
+#### 1.1. Additional filter step for successful attacking phases (those that result in a goal)
+
+```{r}
+# Create a list of attacking phases that result in a goal
+successful_goals_indicators <- ufa_throws |>
+  filter(goal == 1) |>
+  select(gameID, game_quarter, is_home_team, possession_num,
+         home_team_score, away_team_score)
+
+successful_goals_indicators
+```
+
+```{r}
+# Now only keep these attacking phases in the UFA throws table
+successful_attacking_phases <- successful_goals_indicators |>
+  left_join(ufa_throws,
+            join_by(gameID, game_quarter, is_home_team, possession_num,
+                    home_team_score, away_team_score))
+
+successful_attacking_phases
+```
+
+#### 2. Number of left-wing, right-wing, and cross-wing passes
+
+Overall distribution across the dataset:
+
+```{r}
+successful_attacking_phases <- successful_attacking_phases |>
+  mutate(throw_path_type = case_when(
+    (thrower_x >= 0) & (receiver_x >= 0) ~ "right_wing",
+    (thrower_x <= 0) & (receiver_x <= 0) ~ "left_wing",
+    TRUE ~ "cross_throw"
+    ),
+    team_in_possession = case_when(
+      is_home_team == TRUE ~ home_teamID,
+      is_home_team == FALSE ~ away_teamID
+    ))
+
+successful_attacking_phases
+```
+
+```{r}
+count_throw_path_type <- successful_attacking_phases |>
+  group_by(gameID, game_quarter, team_in_possession, possession_num,
+           home_team_score, away_team_score) |>
+  # Count the throw path type (which wing?) by each attacking phase in all matches
+  count(throw_path_type) |>
+  ungroup()
+
+count_throw_path_type
+```
+
+```{r}
+# Note that we are working on successful attacking phases: the attacks that eventually lead to a goal
+
+throw_path_by_team <- count_throw_path_type |>
+  select(team_in_possession, throw_path_type, n) |>
+  # Count of different types of throws by team
+  group_by(team_in_possession, throw_path_type) |>
+  summarize(count_throw_path = n()) |>
+  ungroup()
+
+throw_path_by_team
+
+sum_throws_by_team <- count_throw_path_type |>
+  select(team_in_possession, n) |>
+  # Total of throws by team in possession
+  count(team_in_possession)
+
+sum_throws_by_team
+
+prop_throws_by_team <- throw_path_by_team |>
+  left_join(sum_throws_by_team, join_by(team_in_possession)) |>
+  mutate(prop = count_throw_path / n) |>
+  filter(!(team_in_possession %in% c("allstars1", "allstars2")))
+
+prop_throws_by_team
+```
+
+```{r}
+# Which teams have the highest proportion of cross throws?
+
+prop_throws_by_team |>
+  filter(throw_path_type == "cross_throw") |>
+  select(team = team_in_possession, prop) |>
+  ggplot(aes(y = team, x = prop)) +
+  geom_col()
+```
+
+#### Other questions (will explore later):
+
+- Which place up the field (y-coordinate) are teams most likely to change their wing of attack?
+- How many shots on goal (not passes) are performed inside a wing or cross-wings?
+- Number of goals that a team has made after picking up from at least a turnover?
+- Explore the starting position (where to build up) and ending position (where there is a shot on goal) of a successful/unsuccessful attacking phase
+- Explore the possession time of a successful attacking phase, although this is outside of the throw position data focus of this notebook
