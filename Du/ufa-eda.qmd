@@ -6,6 +6,10 @@ format: html
 ```{r}
 library(tidyverse)
 library(lubridate)
+library(ggplot2)
+library(forcats)
+library(tidytext)
+
 ufa_throws <- read_csv("https://raw.githubusercontent.com/BradenEberhard/Expected-Throwing-Value/refs/heads/main/data/all_games_1024.csv")
 
 ufa_throws <- ufa_throws |> 
@@ -71,3 +75,121 @@ thrower, thrower_x, thrower_y, receiver, receiver_x, receiver_y
 
 ## Throw (results in goal/turnover, angle)
 turnover, game_quarter, is_home_team, times (game time remaining in seconds), throw_distance, x_diff, y_diff, throw_angle 
+
+## Team metrics
+```{r}
+ufa_throws <- ufa_throws|>
+  filter(!(home_teamID %in% c("allstars1", "allstars2") & away_teamID %in% c("allstars1", "allstars2"))) |>
+  mutate(date_clean = as_date(str_sub(gameID, 1, 10)),
+         year = year(date_clean))
+
+game_team_status <- ufa_throws |>
+  group_by(gameID) |>
+  select(home_teamID, away_teamID) |>
+  pivot_longer(cols = c("home_teamID", "away_teamID"),
+               values_to = "teamID",
+               names_to = "status") |>
+  slice(1:2) |>
+  ungroup() |>
+  mutate(status = str_remove(status, "_teamID"))
+
+team_games <- ufa_throws |>
+  select(gameID, home_teamID, away_teamID, home_team_win) |>
+  group_by(gameID) |>
+  slice(1) |>
+  pivot_longer(cols = c("home_teamID", "away_teamID"),
+               values_to = "teamID",
+               names_to = "status") |>
+  ungroup() |>
+  mutate(status = str_remove(status, "_teamID")) |>
+  mutate(win = if_else(status == "home", home_team_win, 1 - home_team_win)) |>
+  select(-home_team_win) |>
+  mutate(date_clean = as_date(str_sub(gameID, 1, 10)),
+         year = year(date_clean),
+         month = month(date_clean)) |>
+  relocate(gameID, date_clean, year, month, teamID, status, win)
+``` 
+
+```{r}
+team_games1 <- team_games |>
+  group_by(year, teamID) |>
+  summarize(n_win = sum(win),
+            n_loss = sum(win == 0)) |>
+  ungroup()
+
+team_games1 |>
+  mutate(teamID = reorder_within(teamID, by = -n_win, within = year, fun = sum, sep = "___")) |>
+  pivot_longer(cols = c("n_win", "n_loss"),
+               values_to = "n",
+               names_to = "result") |>
+  mutate(result = str_remove(result, "n_")) |>
+  ggplot(aes(x = teamID, y = n, fill = result)) +
+  geom_bar(stat = "identity", position = "stack") +
+  facet_wrap(~year, scales = "free_x") + 
+  scale_x_reordered() +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+all_teams <- unique(ufa_throws$away_teamID) # 26 teams in total 
+all_teams <- all_teams[all_teams != "allstars1"]
+# cannons, havoc, nitro, outlaws, shred, summit only took part in 2 or 3 seasons 
+
+n_home_games <- ufa_throws |>
+  filter(!(home_teamID %in% c("allstars1", "allstars2") & away_teamID %in% c("allstars1", "allstars2"))) |>
+  group_by(home_teamID, year) |>
+  summarize(n_home_games = n_distinct(gameID))
+
+n_away_games <- ufa_throws |>
+  filter(!(home_teamID %in% c("allstars1", "allstars2") & away_teamID %in% c("allstars1", "allstars2"))) |>
+  group_by(away_teamID, year) |>
+  summarize(n_away_games = n_distinct(gameID)) 
+
+left_join(n_home_games, n_away_games, by = c("home_teamID" = "away_teamID", "year" = "year"))
+  
+```
+
+```{r}
+all_home_games <- ufa_throws |>
+  filter(home_teamID %in% all_teams) |>
+  group_by(home_teamID, gameID) |>
+  summarize(n_throws = n(),
+            win = head(home_team_win, n = 1)) |>
+  ungroup() 
+
+all_away_games <- ufa_throws |>
+  filter(away_teamID %in% all_teams) |>
+  group_by(away_teamID, gameID) |>
+  summarize(n_throws = n(),
+            win = head(home_team_win, n = 1)) |>
+  ungroup()
+
+all_home_games |>
+  group_by(home_teamID) |>
+  count(win) |>
+  pivot_wider(names_from = win,
+              values_from = n) |>
+  rename(loss = "0",
+         win = "1")
+
+all_away_games |>
+  group_by(away_teamID) |>
+  count(win) |>
+  pivot_wider(names_from = win,
+              values_from = n) |>
+  rename(loss = "0",
+         win = "1")
+
+all_games |>
+  mutate(date_clean = as_date(str_sub(gameID, 1, 10)),
+         year = year(date_clean),
+         month = month(date_clean)) |>
+  group_by(year, home_teamID)
+  
+# avg turnover rate per game
+```
+
+
+# distance of throws   trajectory of all throws --> goal 
