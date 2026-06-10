@@ -9,6 +9,7 @@ library(lubridate)
 library(ggplot2)
 library(forcats)
 library(tidytext)
+library(ggthemes)
 
 ufa_throws <- read_csv("https://raw.githubusercontent.com/BradenEberhard/Expected-Throwing-Value/refs/heads/main/data/all_games_1024.csv")
 
@@ -193,3 +194,152 @@ all_games |>
 
 
 # distance of throws   trajectory of all throws --> goal 
+
+
+# cluster analysis on player style of play
+not sure if style of play differs between individual players or combinations of players
+## data wrangling 
+```{r}
+# number of throws/game, number of receives/game, average throw_distance, average throw_y, number of goals per game, (throw_x, throw_angle, x_diff, y_diff)??
+
+# cutter, handler, hybrid 
+throw_subset <- ufa_throws |>
+  mutate(throwID = row_number()) |>
+  relocate(throwID) |>
+  select(throwID, thrower, receiver, throw_distance, thrower_y, gameID, goal)
+
+player_n_throw <- throw_subset |>
+  group_by(thrower, gameID) |>
+  count() |>
+  ungroup() |>
+  group_by(thrower) |>
+  summarize(n_throw = sum(n),
+            n_game_throw = n_distinct(gameID)) |>
+  mutate(avg_n_throw = n_throw/n_game_throw) |>
+  rename(player = thrower)
+
+player_n_receive <- throw_subset |>
+  group_by(receiver, gameID) |>
+  count() |>
+  ungroup() |>
+  group_by(receiver) |>
+  summarize(n_receive = sum(n),
+            n_game_receive = n_distinct(gameID)) |>
+  mutate(avg_n_receive = n_receive/n_game_receive) |>
+  rename(player = receiver)
+
+player_n <- left_join(player_n_throw, player_n_receive, by = "player") |>
+  select(player, avg_n_throw, avg_n_receive) 
+```
+
+still need to get these metrics for each player: average throw_distance, average throw_y, number of goals per game
+
+```{r}
+player_throw_dist <- throw_subset |>
+  group_by(thrower) |>
+  summarize(avg_throw_distance = sum(throw_distance)/n(),
+            avg_thrower_y = sum(thrower_y)/n()) |>
+  ungroup() |>
+  rename(player = thrower)
+
+player_n <- left_join(player_n, player_throw_dist, by = "player")
+```
+
+```{r}
+player_n_goal <- throw_subset |>
+  group_by(gameID, thrower) |>
+  summarize(n_goal = sum(goal)) |>
+  ungroup() |>
+  group_by(thrower) |>
+  summarize(avg_n_goal = sum(n_goal)/n()) |>
+  ungroup() |>
+  rename(player = thrower)
+
+player_n <- left_join(player_n, player_n_goal, by = "player")
+```
+
+## K-means clustering
+```{r}
+std_player_stats <- player_n |>
+  select(-player) |>
+  scale(center = TRUE, scale = TRUE) |>
+  as_tibble() |>
+  mutate(avg_n_receive = coalesce(avg_n_receive, 0))
+
+std_player_stats1 <- player_n |>
+  mutate(across(where(is.numeric), ~ as.numeric(scale(.)))) |>
+  mutate(avg_n_receive = coalesce(avg_n_receive, 0))
+```
+
+```{r}
+# elbow plot to determine the number of clusters 
+player_kmeans <- function(k) {
+  kmeans_results <- std_player_stats |>
+    #select(avg_n_throw, avg_throw_distance) |>
+    kmeans(centers = k, nstart = 30, iter.max = 30)
+  
+  kmeans_out <- tibble(
+    clusters = k,
+    total_wss = kmeans_results$tot.withinss
+  )
+  return(kmeans_out)
+}
+
+n_cluster_search <- 1:6
+
+kmeans_search <- n_cluster_search |>
+  map(player_kmeans) |>
+  bind_rows()
+
+kmeans_search |> 
+  ggplot(aes(x = clusters, y = total_wss)) +
+  geom_line() +
+  geom_point() +
+  scale_x_continuous(breaks = n_cluster_search)
+```
+
+```{r}
+set.seed(743932)
+player_kmeans1 <- std_player_stats |>
+  #select(avg_n_throw, avg_throw_distance) |>
+  kmeans(algorithm = "Hartigan-Wong",
+         centers = 3,
+         nstart = 30,
+         iter.max = 30)
+
+library(ggimage)
+std_player_stats |>
+  mutate(player_clusters = as.factor(player_kmeans1$cluster)) |>
+  ggplot(aes(x = avg_n_throw, y = avg_n_receive, color = player_clusters)) +
+  geom_point() +
+  scale_color_colorblind(labels = c("1" = "Hybrid",
+                                    "2" = "Cutter",
+                                    "3" = "Handler")) +
+  theme_minimal() +
+  coord_fixed() +
+  annotation_raster(raster = img,
+                    xmin = 2.2, xmax = 2.6,
+                    ymin = 2.6, ymax = 3.0)
+  # geom_image(
+  #   data = img_data,
+  #   aes(x = x_coord, y = y_coord, image = image_path),
+  #   size = 0.8
+  # )
+```
+
+```{r}
+# "gsanner", "aroy": cutters
+# "pjanas", "bmatzuka": handlers (or just greater thrower?)
+# "jwilliams", "etaylor", "acoffin", "jkerr", "rbarker", "khenke", "tmonroe": hybrids 
+
+std_player_stats1 |>
+  filter(player %in% c("jwilliams", "etaylor", "acoffin", "jkerr", "rbarker", "khenke", "tmonroe", "gsanner", "aroy", "pjanas", "bmatzuka"))
+
+img_data <- tibble(
+  x_coord = 2.4130366,
+  y_coord = 2.82300490,
+  image_path = "~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/jwilliams_profile.jpg")
+
+img <- readJPEG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/jwilliams_profile.jpg")
+```
+
