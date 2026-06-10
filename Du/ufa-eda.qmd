@@ -310,7 +310,7 @@ player_kmeans1 <- std_player_stats |>
 library(ggimage)
 std_player_stats |>
   mutate(player_clusters = as.factor(player_kmeans1$cluster)) |>
-  ggplot(aes(x = avg_n_throw, y = avg_n_receive, color = player_clusters)) +
+  ggplot(aes(x = avg_n_throw, y = avg_throw_distance, color = player_clusters)) +
   geom_point() +
   scale_color_colorblind(labels = c("1" = "Hybrid",
                                     "2" = "Cutter",
@@ -343,3 +343,4 @@ img_data <- tibble(
 img <- readJPEG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/jwilliams_profile.jpg")
 ```
 
+home vs. away differences 
