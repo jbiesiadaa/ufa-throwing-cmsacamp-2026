@@ -197,7 +197,7 @@ all_games |>
 
 
 # cluster analysis on player style of play
-not sure if style of play differs between individual players or combinations of players
+1. not sure if style of play differs between individual players or combinations of players
 ## data wrangling 
 ```{r}
 # number of throws/game, number of receives/game, average throw_distance, average throw_y, number of goals per game, (throw_x, throw_angle, x_diff, y_diff)??
@@ -258,7 +258,7 @@ player_n_goal <- throw_subset |>
 player_n <- left_join(player_n, player_n_goal, by = "player")
 ```
 
-## K-means clustering
+## 1. K-means clustering
 ```{r}
 std_player_stats <- player_n |>
   select(-player) |>
@@ -343,4 +343,182 @@ img_data <- tibble(
 img <- readJPEG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/jwilliams_profile.jpg")
 ```
 
-home vs. away differences 
+
+## 1. Hierarchical clustering
+```{r}
+players_dist <- std_player_stats |>
+  # select(avg_n_throw, avg_throw_distance) |>
+  dist()
+
+players_dist_matrix <- as.matrix(players_dist)
+rownames(players_dist_matrix) <- std_player_stats1$player
+colnames(players_dist_matrix) <- std_player_stats1$player
+
+players_dist_matrix[1:4, 1:4]
+```
+```{r}
+library(factoextra)
+std_player_stats |>
+  fviz_nbclust(FUN = hcut, method = "silhouette")
+```
+
+```{r}
+players_complete <- players_dist |>
+  hclust(method = "complete")
+
+std_player_stats1 |>
+  mutate(cluster = as.factor(cutree(players_complete, k = 3))) |>
+  relocate(cluster) |>
+  ggplot(aes(x = avg_n_throw, y = avg_throw_distance, color = cluster)) +
+  geom_point() +
+  coord_fixed() +
+  scale_color_colorblind(labels = c("1" = "Handler",
+                                    "2" = "Hybrid",
+                                    "3" = "Cutter")) +
+  theme_minimal()
+```
+
+```{r}
+library(ggdendro)
+
+players_complete |>
+  ggdendrogram(labels = FALSE, leaf_labels = FALSE) +
+  labs(y = "Dissimilarity between clusters") + 
+  theme(axis.text.x = element_blank(),
+        axis.title.x = element_blank(),
+        panel.grid = element_blank())
+```
+
+## 3. Soft clustering with GMM 
+
+```{r}
+library(mclust)
+
+player_mclust <- std_player_stats |>
+  select(avg_n_throw, avg_throw_distance) |>
+  Mclust()
+
+summary(player_mclust)
+```
+
+```{r}
+library(gt)
+library(broom)
+gt(tidy(player_mclust))
+```
+
+
+2. Cluster throws on time remaining, score difference 
+compare completion rate, throw distance
+
+adjust shape/alpha based on whether there was a turnover?
+
+## 2. K-means clustering
+
+```{r}
+ufa_throws$turnover <- as.factor(ufa_throws$turnover)
+std_throw_stats <- ufa_throws |>
+  filter(year == 2024 & month == 8) |>
+  mutate(across(where(is.numeric), ~ as.numeric(scale(.))))
+```
+
+```{r}
+# elbow plot 
+std_throw_stats |>
+  select(times, score_diff) |>
+  fviz_nbclust(kmeans, method = "wss")
+```
+
+```{r}
+set.seed(79174)
+throw_kmeans <- std_throw_stats |>
+  select(score_diff, throw_distance) |>
+  kmeans(algorithm = "Hartigan-Wong",
+         centers = 3, 
+         nstart = 30, 
+         iter.max = 30)
+
+std_throw_stats <- std_throw_stats |>
+  mutate(throw_clusters = as.factor(throw_kmeans$cluster))
+
+std_throw_stats |>
+  ggplot(aes(x = times, y = score_diff, color = throw_clusters)) +
+  geom_point() +
+  scale_color_colorblind() +
+  coord_fixed() +
+  theme_minimal()
+
+std_throw_stats |>
+  mutate(throw_clusters = as.factor(throw_kmeans$cluster)) |>
+  ggplot(aes(x = score_diff, y = throw_distance, color = throw_clusters)) +
+  geom_point() + 
+  geom_hline(yintercept = 1.60, color = "red", linetype = "dashed") +
+  scale_color_colorblind() +
+  coord_fixed() +
+  theme_minimal()
+
+# how can we interpret these plots, especially with "score_diff" being discrete and "turnover" being a indicator variable?
+
+# what's considered a long-distance throw: ~1.6 sd from the mean and above (~35 yd)
+1.6*sd(ufa_throws$throw_distance) + mean(ufa_throws$throw_distance)
+```
+
+```{r}
+std_throw_stats |>
+  ggplot(aes(x = throw_distance, color = turnover)) +
+  geom_dotplot() +
+  facet_wrap(~throw_clusters) +
+  theme_minimal()
+```
+
+
+## 2. Hierarchical clustering
+```{r}
+std_throw_stats <- ufa_throws |>
+  filter(year == 2024) |>
+  mutate(across(where(is.numeric), ~ as.numeric(scale(.))))
+```
+
+```{r}
+throws_dist <- std_throw_stats |>
+  select(times, score_diff) |>
+  dist()
+
+# Error: vector memory limit of 16.0 Gb reached, see mem.maxVSize()
+library(amap)
+throws_dist <- Dist(std_throw_stats, method = "euclidean")
+```
+
+
+# Home vs. away differences 
+```{r}
+team_avg_net <- full_team_stats |>
+  select(team, home_games, away_games) |>
+  left_join(home_score, by = "team") |>
+  rename(total_goals_scored_home = total_goals_scored,
+         total_goals_conceded_home = total_goals_conceded) |>
+  left_join(away_score, by = "team") |>
+  rename(total_goals_scored_away = total_goals_scored,
+         total_goals_conceded_away = total_goals_conceded) |>
+  mutate(avg_goal_scored_home = total_goals_scored_home/home_games,
+         avg_goal_conceded_home = total_goals_conceded_home/home_games,
+         avg_goal_scored_away = total_goals_scored_away/away_games,
+         avg_goal_conceded_away = total_goals_conceded_away/away_games,
+         avg_net_home = avg_goal_scored_home - avg_goal_conceded_home,
+         avg_net_away = avg_goal_scored_away - avg_goal_conceded_away) |>
+  select(team, avg_net_home, avg_net_away) |>
+  pivot_longer(cols = c("avg_net_home", "avg_net_away"),
+               values_to = "avg_net",
+               names_to = "status") |>
+  mutate(status = str_remove(status, "avg_net_"))
+```
+
+```{r}
+# spaghetti_plot
+
+ggplot(team_avg_net, aes(x = status, y = avg_net)) +
+  geom_point() +
+  geom_line(aes(group = team), color = "darkgray", alpha = 0.4) +
+  theme_minimal()
+```
+
