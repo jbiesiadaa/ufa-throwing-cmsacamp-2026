@@ -1,0 +1,250 @@
+---
+format: gfm
+---
+
+#### 0. Read the team statistics data
+
+The original CSV file is created using the `04_exploring_teams_data.qmd` file.
+
+```{r}
+# Read the file and extract information of different teams
+# (underperforming, mediocre, and elite teams)
+rm(list = ls())
+library(tidyverse)
+
+full_team_stats <- read.csv("full_team_stats.csv", sep = ",")
+full_team_stats
+```
+
+```{r}
+# Elite teams (top 3): empire, shred, breeze. win_pct >= 0.8
+# Mediocre teams (middle 3): radicals, growlers, glory. win_pct >= 0.5
+# Underperforming teams (bottom 3): cannons, nitro, mechanix. win_pct lowest
+
+selected_teams = c("empire", "shred", "breeze",
+                   "radicals", "growlers", "glory",
+                   "cannons", "nitro", "mechanix")
+
+selected_team_stats <- full_team_stats |>
+  filter(team %in% selected_teams) |>
+  arrange(desc(win_pct))
+
+selected_team_stats
+```
+
+#### 0. Read the teams' individual throw data
+
+```{r}
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+ufa_throws
+```
+
+```{r}
+ufa_throws_updated <- ufa_throws |>
+  # Flipping the dataset so that positive x is the right side and negative x
+  # is the left side
+  mutate(thrower_x = (-1) * thrower_x,
+         receiver_x = (-1) * receiver_x,
+         throw_distance = sqrt((receiver_x-thrower_x)^2 + (receiver_y-thrower_y)^2),
+         x_diff = receiver_x - thrower_x,
+         throw_angle = atan2(y_diff, x_diff),
+  # Add the teams in possession data
+         team_in_possession = ifelse(is_home_team == TRUE,
+                                     home_teamID, away_teamID),
+  # Add the throw path type data for individual throws & attack outcome
+         throw_path_type = case_when(
+           (thrower_x >= 0) & (receiver_x >= 0) ~ "right_wing",
+           (thrower_x <= 0) & (receiver_x <= 0) ~ "left_wing",
+           TRUE ~ "cross_throws"
+           ),
+  attacking_phaseID = consecutive_id(gameID, game_quarter, is_home_team,
+                                     possession_num, home_team_score,
+                                     away_team_score)) |>
+  # Filter for selected teams
+  filter(team_in_possession %in% selected_teams)
+
+ufa_throws_updated
+```
+
+```{r}
+# Add the attack outcome indicators (unique to each attacking phase ID)
+attack_outcome_indicators <- ufa_throws_updated |>
+  select(attacking_phaseID, goal, turnover) |>
+  group_by(attacking_phaseID) |>
+  summarize(sum_goal = sum(goal),
+            sum_turnover = sum(turnover)) |>
+  ungroup() |>
+  mutate(attack_outcome = case_when(
+    sum_goal == 1 ~ 1,
+    sum_goal == 0 & sum_turnover >= 1 ~ 0,
+    sum_goal == 0 & sum_turnover == 0 ~ -1
+  )) |>
+  select(attacking_phaseID, attack_outcome)
+
+attack_outcome_indicators
+```
+
+```{r}
+ufa_throws_updated <- ufa_throws_updated |>
+  left_join(attack_outcome_indicators, join_by(attacking_phaseID))
+
+ufa_throws_updated
+```
+
+#### 1. Teams' attacking styles through heat maps
+
+Location of throws on goal ("ultimate frisbee's definition of assists") by team:
+
+```{r}
+ufa_throws_updated |>
+  filter(goal == 1) |>
+  ggplot() +
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y)) +
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3)) +
+  # For shots, we only consider those made after the midpoint
+  # because shot data in other areas are so scarce
+  scale_y_continuous(limits = c(60, 110)) +
+  coord_fixed() + scale_fill_viridis_d() +
+  geom_hline(yintercept = 100, color = "white") +
+  theme(legend.position = "none") +
+  facet_wrap(~ team_in_possession, nrow = 3, ncol = 3)
+```
+
+Possible candidates for the case study:
+- `radicals` (mediocre), `shred` (elite), `growlers` (underperforming).
+- `breeze`/`empire` (elite), `cannons` (underperforming)
+
+Locations of throws (successful throws only, without a turnover) by team:
+
+```{r}
+ufa_throws_updated |>
+  filter(turnover == 0) |>
+  ggplot() +
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y)) +
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3)) +
+  scale_y_continuous(limits = c(0, 120)) +
+  coord_fixed() + scale_fill_viridis_d() +
+  geom_hline(yintercept = 20, color = "white") +
+  geom_hline(yintercept = 60, color = "gray40") +
+  geom_hline(yintercept = 100, color = "white") +
+  theme(legend.position = "none") +
+  facet_wrap(~ team_in_possession, nrow = 1, ncol = 9)
+```
+
+Locations of throws (successful throws in a successful attacking phase) by team:
+
+```{r}
+ufa_throws_updated |>
+  filter(turnover == 0 & attack_outcome == 1) |>
+  ggplot() +
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y)) +
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3)) +
+  scale_y_continuous(limits = c(0, 120)) +
+  coord_fixed() + scale_fill_viridis_d() +
+  geom_hline(yintercept = 20, color = "white") +
+  geom_hline(yintercept = 60, color = "gray40") +
+  geom_hline(yintercept = 100, color = "white") +
+  theme(legend.position = "none") +
+  facet_wrap(~ team_in_possession, nrow = 1, ncol = 9)
+```
+
+Locations of turnover throws by team:
+
+```{r}
+ufa_throws_updated |>
+  filter(turnover == 1) |>
+  ggplot() +
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y)) +
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3)) +
+  scale_y_continuous(limits = c(0, 120)) +
+  coord_fixed() + scale_fill_viridis_d() +
+  geom_hline(yintercept = 20, color = "white") +
+  geom_hline(yintercept = 60, color = "gray40") +
+  geom_hline(yintercept = 100, color = "white") +
+  theme(legend.position = "none") +
+  facet_wrap(~ team_in_possession, nrow = 1, ncol = 9)
+```
+
+- `empire`'s weak points are roughly evenly distributed across multiple places on the field.
+- `cannons`'s weak points are more pronounced.
+
+The positions of receivers by team (not counting turnovers with no particular receiver):
+
+```{r}
+ufa_throws_updated |>
+  ggplot() +
+  geom_density_2d_filled(aes(x = receiver_x, y = receiver_y)) +
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3)) +
+  scale_y_continuous(limits = c(0, 120)) +
+  coord_fixed() + scale_fill_viridis_d() +
+  geom_hline(yintercept = 20, color = "white") +
+  geom_hline(yintercept = 60, color = "gray40") +
+  geom_hline(yintercept = 100, color = "white") +
+  theme(legend.position = "none") +
+  facet_wrap(~ team_in_possession, nrow = 1, ncol = 9)
+```
+
+The endpoints of an attack by team, for unsuccessful attacks only (where turnover happens). In other words, to what extent the attacking phase has created additional danger up the field?
+
+```{r}
+last_poss_throws <- ufa_throws_updated |>
+  select(attacking_phaseID, possession_throw) |>
+  group_by(attacking_phaseID) |>
+  summarize(last_poss_throw = max(possession_throw))
+
+last_poss_throws
+```
+
+```{r}
+unsuccessful_poss_ends <- last_poss_throws |>
+  left_join(ufa_throws_updated,
+            join_by(attacking_phaseID, last_poss_throw == possession_throw))
+
+unsuccessful_poss_ends
+
+unsuccessful_poss_ends |>
+  ggplot() +
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y)) +
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3)) +
+  scale_y_continuous(limits = c(0, 120)) +
+  coord_fixed() + scale_fill_viridis_d() +
+  geom_hline(yintercept = 20, color = "white") +
+  geom_hline(yintercept = 60, color = "gray40") +
+  geom_hline(yintercept = 100, color = "white") +
+  theme(legend.position = "none") +
+  facet_wrap(~ team_in_possession, nrow = 1, ncol = 9)
+```
+
+#### 2. Teams' statistics through numeric comparisons
+
+```{r}
+pairwise_comparison_stats <- full_team_stats |>
+  filter(team %in% c("empire", "cannons"))
+
+pairwise_comparison_stats
+```
+
+```{r}
+pairwise_comparison_stats |>
+  select(team, cross_throw_rate, left_wing_rate, right_wing_rate) |>
+  pivot_longer(-team, names_to = "metric", values_to = "value") |>
+  ggplot(aes(x = metric, y = value, fill = team)) +
+  geom_col(position = "dodge")
+```
+
+```{r}
+pairwise_comparison_stats |>
+  select(team, short_throw_rate, medium_throw_rate, long_throw_rate) |>
+  pivot_longer(-team, names_to = "metric", values_to = "value") |>
+  ggplot(aes(x = metric, y = value, fill = team)) +
+  geom_col(position = "dodge")
+```
+
+```{r}
+pairwise_comparison_stats |>
+  select(team, avg_throw_distance, avg_goal_distance, avg_turnover_distance) |>
+  pivot_longer(-team, names_to = "metric", values_to = "value") |>
+  ggplot(aes(x = metric, y = value, fill = team)) +
+  geom_col(position = "dodge")
+```
+

@@ -65,6 +65,9 @@ ufa_throws_updated <- ufa_throws_updated |>
   left_join(attack_outcome_indicators)
 
 ufa_throws_updated
+
+dim(ufa_throws)
+dim(ufa_throws_updated)
 ```
 
 ```{r}
@@ -293,11 +296,55 @@ In ultimate frisbee, "assist" means a pass directly to the end zone, which score
 
 A pass that directly precedes an assist is called the "hockey assist", which is actually what we know about assists in other sports.
 
-[TO BE UPDATED]
+```{r}
+# For each attacking phase ID, count the possession throw
+hockey_assist_throw_indicators <- ufa_throws_updated |>
+  filter(attack_outcome == 1) |>
+  select(attacking_phaseID, possession_throw) |>
+  group_by(attacking_phaseID) |>
+  
+  # There are some goals that are made only with 1 throw.
+  # We want to filter them out because there are no assists here
+  
+  # Additionally, we want to name this column "possession_throw" to make joining
+  # with the original DataFrame easier
+  summarize(possession_throw = max(possession_throw) - 1) |>
+  filter(possession_throw != 0) |>
+  ungroup()
 
-#### 6. Do something about the conversion rate (Ratio of goals over the number of possession, or attacking phases, that the team has made)
+hockey_assist_throw_indicators
+```
 
-[TO BE UPDATED]
+```{r}
+# Then, we merge these data back into the full UFA throws table to get more information about these assist throws
+
+hockey_assist_throws_data <- hockey_assist_throw_indicators |>
+  left_join(ufa_throws_updated, join_by(attacking_phaseID, possession_throw))
+
+hockey_assist_throws_data
+```
+
+```{r}
+# We will also plot the usual heat map of the thrower's position at this point
+
+hockey_assist_throws_data |>
+  ggplot() +
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y)) +
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3)) +
+  scale_y_continuous(limits = c(0, 120)) +
+  geom_hline(yintercept = 20, color = "white") +
+  geom_hline(yintercept = 100, color = "white") +
+  geom_hline(yintercept = 60, color = "gray60") +
+  coord_fixed() + theme(legend.position = "none")
+```
+
+Most of the (hockey) assists take place between the 75 and 100-yard line right before the opponent's desired end zone.
+
+#### 6. Some further actions
+
+- Do something about the conversion rate (Ratio of goals over the number of possession, or attacking phases, that the team has made)
+
+- 
 
 #### Some randomly discovered useful frisbee analytics articles that might become an inspiration:
 

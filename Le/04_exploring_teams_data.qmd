@@ -1,0 +1,610 @@
+---
+format: gfm
+---
+
+This is directly extracted from Julia's original code.
+
+```{r}
+rm(list = ls())
+
+###Julia Biesiada
+### Title: Data Wrangling - Teams Overviews
+
+## -- 0. Data Loading-----------------------------------------------------------
+library(tidyverse)
+library(ggplot2)
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+
+# -- 1. Filter out all-star games once -----------------------------------------
+ufa_clean <- ufa_throws |>
+  filter(home_teamID != "allstars1",
+         away_teamID != "allstars1")
+
+# -- 2. Home goals scored / conceded per game, then summed ---------------------
+home_score <- ufa_clean |>
+  group_by(home_teamID, gameID) |>
+  summarise(
+    goals_scored   = max(home_team_score, na.rm = TRUE),
+    goals_conceded = max(away_team_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(home_teamID) |>
+  summarise(
+    total_goals_scored   = sum(goals_scored),
+    total_goals_conceded = sum(goals_conceded),
+    .groups = "drop"
+  ) |>
+  rename(team = home_teamID)
+
+# -- 3. Away goals scored / conceded per game, then summed----------------------
+away_score <- ufa_clean |>
+  group_by(away_teamID, gameID) |>
+  summarise(
+    goals_scored   = max(away_team_score, na.rm = TRUE),
+    goals_conceded = max(home_team_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(away_teamID) |>
+  summarise(
+    total_goals_scored   = sum(goals_scored),
+    total_goals_conceded = sum(goals_conceded),
+    .groups = "drop"
+  ) |>
+  rename(team = away_teamID)
+
+# -- 4. Combined goals (home + away) -------------------------------------------
+combined_goals <- bind_rows(home_score, away_score) |>
+  group_by(team) |>
+  summarise(
+    total_goals_scored   = sum(total_goals_scored),
+    total_goals_conceded = sum(total_goals_conceded),
+    .groups = "drop"
+  )
+# -- 5. Home/Away split stats --------------------------------------------------
+split_stats <- ufa_clean |>
+  mutate(
+    team     = if_else(is_home_team == TRUE, home_teamID, away_teamID),
+    location = if_else(is_home_team == TRUE, "home", "away"),
+    win      = (is_home_team == TRUE  & home_team_win == 1) |
+      (is_home_team == FALSE & home_team_win == 0)
+  ) |>
+  group_by(team, location) |>
+  summarise(
+    games     = n_distinct(gameID),
+    wins      = n_distinct(gameID[win]),
+    losses    = games - wins,
+    throws    = sum(turnover == 0 & goal == 0, na.rm = TRUE),
+    turnovers = sum(turnover == 1, na.rm = TRUE),
+    .groups   = "drop"
+  ) |>
+  pivot_wider(
+    names_from  = location,
+    values_from = c(games, wins, losses, throws, turnovers),
+    names_glue  = "{location}_{.value}"          # e.g. home_games, away_wins
+  )
+
+# -- 6. Core team stats --------------------------------------------------------
+team_stats_core <- ufa_clean |>
+  mutate(
+    team = if_else(is_home_team == TRUE, home_teamID, away_teamID),
+    win  = (is_home_team == TRUE  & home_team_win == 1) |
+      (is_home_team == FALSE & home_team_win == 0)
+  ) |>
+  group_by(team) |>
+  summarise(
+    total_games     = n_distinct(gameID),
+    total_wins      = n_distinct(gameID[win]),
+    total_losses    = total_games - total_wins,
+    total_throws    = sum(turnover == 0 & goal == 0, na.rm = TRUE), #max posession_throw, possesionnumber 1
+    total_goals     = sum(goal == 1,     na.rm = TRUE), #check this 
+    total_turnovers = sum(turnover == 1, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+team_stats <- team_stats_core |>
+  left_join(combined_goals, by = "team") |>
+  left_join(split_stats,    by = "team") |>
+  mutate(
+    # Ratio: goals scored per throw attempt
+    goal_ratio          = round(total_goals / (total_throws + total_goals + total_turnovers), 3),
+    
+    # Ratio: turnovers per total possession attempts
+    turnover_ratio      = round(total_turnovers / (total_throws + total_goals + total_turnovers), 3),
+    
+    # Throws per goal: How many throws take to score a goal?
+    throws_per_goal = round(total_throws / total_goals,1),
+    
+    # +/- box score: goals scored minus goals conceded across all games
+    plus_minus          = total_goals_scored - total_goals_conceded,
+    
+    # Win percentage
+    win_pct             = round(total_wins / total_games,3)
+  ) |>
+  # Tidy column order
+  select(
+    team,
+    total_games, total_wins, total_losses, win_pct,
+    total_throws,throws_per_goal, total_goals, total_turnovers,
+    total_goals_scored, total_goals_conceded, plus_minus,
+    goal_ratio, turnover_ratio,
+    home_games, home_wins, home_losses, home_throws, home_turnovers,
+    away_games, away_wins, away_losses, away_throws, away_turnovers
+  )
+
+team_stats|>
+  mutate(throws_per_goal = total_throws / total_goals)|>
+  select(throws_per_goal)
+
+# 7.Adding Tactical Features ---------------------------------------------------
+
+tactics_features <- ufa_clean|>
+  mutate(team = if_else(is_home_team == TRUE, home_teamID, away_teamID)) |>
+  group_by(team) |>
+  summarise( 
+    ## Offensive Features
+    # Average throw distance on ALL throws
+    avg_throw_distance = round(mean(throw_distance, na.rm = TRUE),2),
+    # Average throw distance specifically on GOALS
+    avg_goal_distance = round(mean(throw_distance[goal == 1], na.rm = TRUE),2),
+    # Average throw distance on TURNOVERS 
+    avg_turnover_distance = round(mean(throw_distance[turnover == 1], na.rm = TRUE),2),
+    # Average throw angle
+    avg_throw_angle = round(mean(abs(throw_angle), na.rm = TRUE),3),
+    # How often they attempt long throws -> (I assume long throw is >20)
+    long_throw_rate = round(sum(throw_distance > 20, na.rm = TRUE) / n(),3),
+    # Long Goal Rate 
+    long_goal_rate        = round(sum(throw_distance > 20 & goal == 1,na.rm = TRUE) /
+                                    sum(goal == 1,                      na.rm = TRUE), 3),
+    
+          
+    ## Defensive Features
+    # Short throw rate — teams that play it safe
+    short_throw_rate = round(sum(throw_distance < 10, na.rm = TRUE) / n(),3),
+    #Medium throw rate 
+    medium_throw_rate = round(sum(throw_distance > 10 & throw_distance < 20, na.rm = TRUE) / n(),3),
+    #What is the long shot turnover rate?
+    long_throw_turnover_rate = round(sum(throw_distance > 20 & turnover == 1, na.rm = TRUE) /
+                                       sum(throw_distance > 20,            na.rm = TRUE), 3),
+    # What is the medium shot turnover rate?
+    medium_throw_turnover_rate = round(sum(throw_distance > 10 & throw_distance < 20 & turnover == 1, na.rm = TRUE) /
+                                        sum(throw_distance > 10 & throw_distance < 20,na.rm = TRUE), 3),
+    #What is the short shot turnover rate?
+    short_throw_turnover_rate = round(sum(throw_distance < 10 & turnover == 1, na.rm = TRUE) /
+                                      sum(throw_distance > 10,            na.rm = TRUE), 3),
+    
+    ## Game Momentum Features (TBD - Add with time stamp and also with the num_possession -> sequence)
+    # Goals scored per quarter - who starts strong vs finishes strong?
+    goals_q1 = sum(goal == 1 & game_quarter == 1, na.rm = TRUE),
+    goals_q2 = sum(goal == 1 & game_quarter == 2, na.rm = TRUE),
+    goals_q3 = sum(goal == 1 & game_quarter == 3, na.rm = TRUE),
+    goals_q4 = sum(goal == 1 & game_quarter == 4, na.rm = TRUE),
+    goals_q5 = sum(goal == 1 & game_quarter == 5, na.rm = TRUE),
+    # Turnovers per quarter - when do they lose concentration?
+    turnovers_q1 = sum(turnover == 1 & game_quarter == 1, na.rm = TRUE),
+    turnovers_q2 = sum(turnover == 1 & game_quarter == 2, na.rm = TRUE),
+    turnovers_q3 = sum(turnover == 1 & game_quarter == 3, na.rm = TRUE),
+    turnovers_q4 = sum(turnover == 1 & game_quarter == 4, na.rm = TRUE),
+    turnover_q5 = sum(turnover == 1 & game_quarter == 5, na.rm = TRUE),
+    # Power quarter — which quarter do they score most?
+    power_quarter = case_when(
+      goals_q1 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q1",
+      goals_q2 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q2",
+      goals_q3 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q3",
+      goals_q4 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q4"
+    ),
+    
+    # Turnover quarter - which quarter do they turnover the most?
+    turnovers_quarter = case_when(
+      turnovers_q1 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q1",
+      turnovers_q2 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q2",
+      turnovers_q3 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q3",
+      turnovers_q4 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q4"
+    ))
+
+# 8.Combining Team Stats and Tactical Features ---------------------------------
+
+full_team_stats <- team_stats |>
+  left_join(tactics_features, by = "team")
+
+# 9. Visualization for Teams Overview ------------------------------------------
+
+#a) Teams Overview for Total Losses and Total Wins (make it better)
+
+full_team_stats |>
+  mutate(team = fct_reorder(team, total_wins, .desc = TRUE))|>
+  pivot_longer(cols = c(total_wins, total_losses),
+               names_to = "outcome",
+               values_to = "count") |>
+  ggplot(aes(x = team, y = count, fill = outcome)) +
+  geom_col(position = "stack") +
+  scale_y_continuous(breaks = seq(0,55, by = 5))+
+  scale_fill_manual(values = c("total_wins" = "lightgreen", "total_losses" = "salmon"),
+                    labels = c("total_wins" = "Total Wins", "total_losses" = "Total Losses"))+
+  labs(title = " Teams Overview",y = "Total Games", x = "Team", fill = "Outcome")+
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 45,
+                                   vjust = 1, hjust = 1))
+
+#b) 
+# Scatter Plot - team patterns 
+#left top - elite (score the most and has the least turnovers)
+#right top - risky (score a lot but also struggle with turnovers)
+#left bottom - safe (can't score but do not make turnovers)
+#riht bottom - struggling (hard to score and make a lot of turnovers)
+ggplot(full_team_stats, aes(
+  x = turnover_ratio,
+  y = goal_ratio,
+  size = win_pct,
+  label = team))+
+  geom_point(alpha = 0.8)+
+  geom_text(vjust = -1, size = 3) +
+  coord_fixed()+
+  theme_minimal()
+
+
+#c) Heat map for the Quarters -> teams and goals by quater 
+
+#d) Heat map for thr Turnovers -> teams and goals by quarter (maybe cutting by teams who played > n games)
+
+#e) Throw Profile per team by creating a bar stack of the short,medium, long throw -> tune the range of the distance
+
+#f) Goal difference (column +-) - like in the pdf - ranking (lolipop)
+
+#g) Home vs Away Win%  -> column to see where teams have better performance
+
+#h) Correaltion map
+```
+
+Julia's dataset (take as given):
+
+```{r}
+full_team_stats
+```
+
+#### 1. Adding other useful metrics to the `full_team_stats` table
+
+Another useful article to check out: https://ultiworld.com/2016/10/25/basic-team-analysis-using-four-metrics/
+
+Note that our current UFA dataset does not divide players into offensive and defensive lines.
+
+```{r}
+more_stats <- ufa_clean |>
+  mutate(team = case_when(
+      is_home_team == TRUE ~ home_teamID,
+      is_home_team == FALSE ~ away_teamID
+      ),
+      throw_path_type = case_when(
+        (thrower_x >= 0) & (receiver_x >= 0) ~ "right_wing",
+        (thrower_x <= 0) & (receiver_x <= 0) ~ "left_wing",
+        TRUE ~ "cross_throw"
+        ),
+      attacking_phaseID = consecutive_id(gameID, game_quarter, is_home_team,
+                                         possession_num, home_team_score,
+                                         away_team_score))
+
+more_stats
+```
+
+```{r}
+# Create different columns to count the right wing, left wing, and cross throws by team
+# The throw counts and throw proportions have filtered out the turnovers
+
+throw_positions <- more_stats |>
+  filter(turnover == 0) |>
+  select(team, throw_path_type) |>
+  group_by(team, throw_path_type) |>
+  summarize(throw_count = n()) |>
+  ungroup() |>
+  pivot_wider(names_from = "throw_path_type", values_from = "throw_count") |>
+  mutate(total_throw_count = cross_throw + left_wing + right_wing,
+         cross_throw_rate = cross_throw / total_throw_count,
+         left_wing_rate = left_wing / total_throw_count,
+         right_wing_rate = right_wing / total_throw_count,
+         dominant_wing = case_when(
+           cross_throw == pmax(cross_throw, left_wing, right_wing) ~ "cross",
+           left_wing == pmax(cross_throw, left_wing, right_wing) ~ "left",
+           right_wing == pmax(cross_throw, left_wing, right_wing) ~ "right"
+         )) |>
+  mutate(dominant_wing = as.factor(dominant_wing)) |>
+  select(team, cross_throw_rate, left_wing_rate, right_wing_rate, dominant_wing)
+
+throw_positions
+
+# Metric of interest: cross_throw_rate, left_wing_rate, right_wing_rate,
+# dominant_wing
+```
+
+```{r}
+# Metric of interest: completion rate for cross throws, left wing, and right wing
+
+throw_completion_wing <- more_stats |>
+  select(team, throw_path_type, turnover) |>
+  group_by(team, throw_path_type) |>
+  summarize(completion_rate = 1 - mean(turnover),
+            .groups = "drop") |>
+  pivot_wider(names_from = "throw_path_type",
+              values_from = "completion_rate") |>
+  rename(cross_throw_completion = cross_throw,
+         left_wing_completion = left_wing,
+         right_wing_completion = right_wing)
+
+throw_completion_wing
+```
+
+```{r}
+# Metric of interest: conversion rate (number of goals / number of possessions)
+
+attack_outcome_indicators <- more_stats |>
+  select(attacking_phaseID, goal, turnover) |>
+  group_by(attacking_phaseID) |>
+  summarize(sum_goal = sum(goal),
+            sum_turnover = sum(turnover)) |>
+  ungroup() |>
+  mutate(attack_outcome = case_when(
+    sum_goal == 1 ~ 1,
+    sum_goal == 0 & sum_turnover >= 1 ~ 0,
+    sum_goal == 0 & sum_turnover == 0 ~ -1
+  )) |>
+  select(attacking_phaseID, attack_outcome)
+
+attack_outcome_indicators
+```
+
+```{r}
+more_stats <- more_stats |>
+  left_join(attack_outcome_indicators, join_by(attacking_phaseID)) |>
+  mutate(perfect_conversion = ifelse(
+    possession_num == 1 & attack_outcome == 1, 1, 0
+    ))
+
+more_stats
+```
+
+```{r}
+# Dropping duplicated data in R:
+# https://www.datanovia.com/en/lessons/identify-and-remove-duplicate-data-in-r/
+
+conversion_rate_table <- more_stats |>
+  select(team, attacking_phaseID, attack_outcome) |>
+  filter(!duplicated(attacking_phaseID)) |>
+  select(-attacking_phaseID) |>
+  
+  # Different from my original data, I will convert attack_outcome to 0
+  # if the attacking phase is incomplete. This ensures that attack_outcome is
+  # a binary variable so we can summarize the conversion rate easier with mean()
+  
+  mutate(attack_outcome = ifelse(
+    attack_outcome == -1, 0, attack_outcome
+  )) |>
+  group_by(team) |>
+  summarize(conversion_rate = mean(attack_outcome),
+            .groups = "drop")
+
+conversion_rate_table
+```
+
+```{r}
+# Metric of interest: Perfect conversion rate
+# This is also similar to conversion rate but needs no prior turnover to count
+
+perfect_conversion_table <- more_stats |>
+  select(team, attacking_phaseID, perfect_conversion) |>
+  filter(!duplicated(attacking_phaseID)) |>
+  select(-attacking_phaseID) |>
+  group_by(team) |>
+  summarize(perfect_conversion_rate = mean(perfect_conversion),
+            .groups = "drop")
+
+perfect_conversion_table
+```
+
+Note that this `perfect_conversion_rate` is divided by the total number of attacking phases (possessions) that a team has had.
+
+Putting all together:
+
+```{r}
+full_team_stats_updated <- full_team_stats |>
+  left_join(throw_positions, join_by(team)) |>
+  left_join(throw_completion_wing, join_by(team)) |>
+  left_join(conversion_rate_table, join_by(team)) |>
+  left_join(perfect_conversion_table, join_by(team))
+```
+
+```{r}
+full_team_stats_updated
+```
+
+```{r}
+# Write the resulting dataframe into a CSV file for reference
+write.csv(full_team_stats_updated, file = "full_team_stats.csv",
+          row.names = FALSE)
+```
+
+#### 2. Explore some relationships between two closely related variables with scatter plots
+
+Comparing goal ratio and turnover ratio, building on Julia's scatter plot but with quadrants:
+
+```{r}
+# https://stackoverflow.com/questions/17521438/geom-rect-and-alpha-does-this-work-with-hard-coded-values
+
+more_full_team_stats <- full_team_stats_updated |>
+  mutate(goal_ratio_demean = scale(goal_ratio,
+                                   center = TRUE, scale = FALSE),
+         turnover_ratio_demean = scale(turnover_ratio,
+                                       center = TRUE, scale = FALSE),
+         conversion_rate_demean = scale(conversion_rate,
+                                        center = TRUE, scale = FALSE),
+         perfect_conversion_rate_demean = scale(perfect_conversion_rate,
+                                                center = TRUE, scale = FALSE))
+
+more_full_team_stats |>
+  ggplot() +
+  
+  # High goal ratio, high turnover ratio
+  annotate("rect", xmin = 0, ymin = 0,
+           xmax = max(more_full_team_stats$turnover_ratio_demean),
+           ymax = max(more_full_team_stats$goal_ratio_demean),
+           fill = "yellow", alpha = 0.3) +
+  
+  # Low goal ratio, low turnover ratio
+  annotate("rect", xmax = 0, ymax = 0,
+           xmin = min(more_full_team_stats$turnover_ratio_demean),
+           ymin = min(more_full_team_stats$goal_ratio_demean),
+           fill = "yellow", alpha = 0.3) +
+  
+  # High goal ratio, low turnover ratio
+  annotate("rect", xmax = 0, ymin = 0,
+           xmin = min(more_full_team_stats$turnover_ratio_demean),
+           ymax = max(more_full_team_stats$goal_ratio_demean),
+           fill = "green", alpha = 0.3) +
+  
+  # High turnover ratio, low goal ratio
+  annotate("rect", xmin = 0, ymax = 0,
+           xmax = max(more_full_team_stats$turnover_ratio_demean),
+           ymin = min(more_full_team_stats$goal_ratio_demean),
+           fill = "red", alpha = 0.3) +
+  
+  # Add points and text to the plot
+  geom_point(aes(x = turnover_ratio_demean, y = goal_ratio_demean,
+                 size = win_pct), alpha = 0.8) +
+  geom_text(aes(x = turnover_ratio_demean, y = goal_ratio_demean,
+                label = team), vjust = -1, size = 3) +
+  
+  geom_hline(yintercept = 0, color = "gray30", linetype = "dashed") +
+  geom_vline(xintercept = 0, color = "gray30", linetype = "dashed") +
+  coord_fixed() + theme_minimal()
+```
+
+Plotting conversion rate and perfect conversion rate:
+
+```{r}
+more_full_team_stats |>
+  ggplot(aes(x = conversion_rate,
+             y = perfect_conversion_rate / conversion_rate)) +
+  
+  # Add points and text to the plot
+  geom_point(aes(size = win_pct), alpha = 0.8) +
+  geom_text(aes(label = team), vjust = -1, size = 3) +
+  
+  # Add a regression line to the plot (very closely related!)
+  geom_smooth(method = "lm") +
+  
+  coord_fixed() + theme_minimal()
+```
+
+Plotting cross throw rate and cross throw completion, colored by dominant wing:
+
+```{r}
+more_full_team_stats |>
+  ggplot(aes(x = cross_throw_rate, y = cross_throw_completion,
+             color = dominant_wing)) +
+  
+  # Add points and text to the plot
+  geom_point(aes(size = win_pct), alpha = 0.8) +
+  geom_text(aes(label = team), vjust = -1, size = 3) +
+  
+  # Add a trend line to the plot
+  geom_smooth(method = "lm", alpha = 0.5) +
+  
+  coord_fixed() + theme_minimal()
+```
+
+#### 3. How often does each team use each type of throw?
+
+```{r}
+full_team_stats_updated |>
+  select(team, cross_throw_rate, left_wing_rate, right_wing_rate) |>
+  pivot_longer(cross_throw_rate:right_wing_rate,
+               names_to = "throw_type", values_to = "proportion") |>
+  ggplot(aes(x = team, y = proportion, fill = throw_type)) +
+  geom_col()
+```
+
+Bonus: Conversion rate and perfect conversion rate based on dominant wing:
+
+```{r}
+# fct_reorder and text rotation syntax used from Lecture 3 materials
+
+full_team_stats_updated |>
+  select(team, conversion_rate, perfect_conversion_rate, dominant_wing) |>
+  # Arrange the teams by descending conversion rate in the plot output
+  mutate(team = fct_reorder(team, conversion_rate, .desc = TRUE)) |>
+  pivot_longer(conversion_rate:perfect_conversion_rate,
+               names_to = "conversion_metric", values_to = "rate") |>
+  ggplot(aes(x = team, y = rate, fill = conversion_metric,
+             color = dominant_wing)) +
+  geom_col(position = "dodge") +
+  theme(legend.position = "bottom",
+        axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+#### Future case study: Empires vs. Mechanix - what makes a team good?
+
+```{r}
+# I have actually filtered for more teams than available to see which comparisons are available
+full_team_stats_updated |>
+  filter(team %in% c("empire", "mechanix")) |>
+  arrange(desc(win_pct))
+```
+
+
+#### 3. Power and turnover quarters (by the number of teams)
+
+```{r}
+quarter_by_teams <- full_team_stats |>
+  count(power_quarter) |>
+  left_join(full_team_stats |> count(turnovers_quarter),
+             join_by(power_quarter == turnovers_quarter),
+             suffix = c("_power", "_turnovers")) |>
+  tidyr::replace_na(list(n_power = 0, n_turnovers = 0)) |>
+  pivot_longer(n_power:n_turnovers, names_to = "stat", values_to = "value")
+
+quarter_by_teams
+
+quarter_by_teams |>
+  ggplot(aes(x = power_quarter, y = value, color = stat)) +
+  geom_point()
+```
+
+#### Additional: Checking Julia's original code with a subset of the data:
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+```
+
+```{r}
+# Filter out all-star games
+ufa_clean <- ufa_throws |>
+  filter(!(home_teamID %in% c("allstars1", "allstars2")),
+         !(away_teamID %in% c("allstars1", "allstars2")))
+
+ufa_clean
+```
+
+```{r}
+test_data <- ufa_clean |>
+  filter(gameID %in% c("2023-06-24-DC-BOS", "2024-04-27-DC-SLC")) |>
+  # Here, it is the team in possession
+  mutate(team = if_else(is_home_team == TRUE, home_teamID, away_teamID))
+  # filter(team == "breeze")
+
+test_data
+```
+
+```{r}
+# Method 1 of calculating goals
+test_data |>
+  group_by(team, gameID) |>
+  summarize(goal_scored_1 = max(away_team_score, na.rm = TRUE),
+            .groups = "drop")
+```
+
+```{r}
+# Method 2 of calculating goals
+test_data |>
+  group_by(team, gameID) |>
+  summarize(goal_scored_2 = sum(goal == 1, na.rm = TRUE),
+            .groups = "drop")
+```
