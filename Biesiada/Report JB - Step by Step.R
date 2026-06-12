@@ -86,8 +86,7 @@ team_stats_core <- ufa_clean |>
     total_games     = n_distinct(gameID),
     total_wins      = n_distinct(gameID[win]),
     total_losses    = total_games - total_wins,
-    total_throws    = sum(turnover == 0 & goal == 0, na.rm = TRUE), #max posession_throw, possesionnumber 1
-    total_goals     = sum(goal == 1,     na.rm = TRUE), #check this 
+    total_throws    = sum(turnover == 0 & goal == 0, na.rm = TRUE),
     total_turnovers = sum(turnover == 1, na.rm = TRUE),
     .groups = "drop"
   )
@@ -97,13 +96,13 @@ team_stats <- team_stats_core |>
   left_join(split_stats,    by = "team") |>
   mutate(
     # Ratio: goals scored per throw attempt
-    goal_ratio          = round(total_goals / (total_throws + total_goals + total_turnovers), 3),
+    goal_ratio          = round(total_goals_scored / (total_throws + total_goals_scored + total_turnovers), 3),
     
     # Ratio: turnovers per total possession attempts
-    turnover_ratio      = round(total_turnovers / (total_throws + total_goals + total_turnovers), 3),
+    turnover_ratio      = round(total_turnovers / (total_throws + total_goals_scored + total_turnovers), 3),
     
     # Throws per goal: How many throws take to score a goal?
-    throws_per_goal = round(total_throws / total_goals,1),
+    throws_per_goal = round(total_throws / total_goals_scored,1),
     
     # +/- box score: goals scored minus goals conceded across all games
     plus_minus          = total_goals_scored - total_goals_conceded,
@@ -115,7 +114,7 @@ team_stats <- team_stats_core |>
   select(
     team,
     total_games, total_wins, total_losses, win_pct,
-    total_throws,throws_per_goal, total_goals, total_turnovers,
+    total_throws,throws_per_goal, total_turnovers,
     total_goals_scored, total_goals_conceded, plus_minus,
     goal_ratio, turnover_ratio,
     home_games, home_wins, home_losses, home_throws, home_turnovers,
@@ -123,7 +122,7 @@ team_stats <- team_stats_core |>
   )
 
 team_stats|>
-  mutate(throws_per_goal = total_throws / total_goals)|>
+  mutate(throws_per_goal = total_throws / total_goals_scored)|>
   select(throws_per_goal)
 
 # 7.Adding Tactical Features ---------------------------------------------------
@@ -204,7 +203,7 @@ full_team_stats <- team_stats |>
 
 # 9. Visualization for Teams Overview ------------------------------------------
 
-## Creatw a win pct
+## Create a win pct (which adds up to 1 and losses pct)
 #a) Teams Overview for Total Losses and Total Wins (make it better)
 
 full_team_stats |>
@@ -491,23 +490,4 @@ plot_data |>
 #d) Clustering
 # - Team playstyle clusters (aggressive/defensive/balanced)
 # -  Player role clusters (hybrid/handler/cutter)
-
-
-# 11. Exploring for me based on the lectures  ----------------------------------
-
-# a) Doing more with group_by() and summarize() -> Lecture 2
-# b) Better looking tables with gt(), rename() -> customize tables -> Lecture 2
-# c) Visualizing 1D categorical data -> geom_bar() -> Lecture 3 
-# d) Visualizing 2D categorical data -> geom_col(), stack bar -> Lecture 3
-# e) Train with pivot_wider() and pivot_longer() -> Lecture 3
-# f) Heatmaps (geom_tile) -> Lecture 3
-# g) Mosaic Plot -> Lecture 3
-# h) Facets -> Many Plots -> Lecture 3
-# i) Boxplots -> Lecture 4
-# j) Histograms , Density, Beeswarm, ECDF plot (1D and 2D), ridgeline plot -> Lecture 4
-# k) scatterplot + regression -> Lecture 4
-# l) creating a denisty heatmap of throws, creating a hexagonal_heatmaps -> Lecture 5
-# m) k-means clustering -> Lecture 6
-# n) dendogram trees -> Lecture 7
-# o) soft clustering -> Lecture 8
 
