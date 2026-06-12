@@ -8,7 +8,7 @@ ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data
 
 # -- 1. Filter out all-star games once -----------------------------------------
 ufa_clean <- ufa_throws |>
-  filter(home_teamID != "allstars1",
+  filter(home_teamID != "allstars2",
          away_teamID != "allstars1")
 
 # -- 2. Home goals scored / conceded per game, then summed ---------------------
@@ -142,26 +142,31 @@ tactics_features <- ufa_clean|>
     # Average throw angle
     avg_throw_angle = round(mean(abs(throw_angle), na.rm = TRUE),3),
     # How often they attempt long throws -> (I assume long throw is >20)
-    long_throw_rate = round(sum(throw_distance > 20, na.rm = TRUE) / n(),3),
+    long_throw_rate = round(sum(throw_distance >= 35, na.rm = TRUE) / n(),3),
     # Long Goal Rate 
-    long_goal_rate        = round(sum(throw_distance > 20 & goal == 1,na.rm = TRUE) /
-                                    sum(goal == 1,                      na.rm = TRUE), 3),
-    
-          
+    long_goal_rate= round(sum(throw_distance >= 35 & goal == 1,na.rm = TRUE) /
+                          sum(goal == 1, na.rm = TRUE), 3),
+    # Short Goal Rate 
+    short_goal_rate= round(sum(throw_distance <= 10 & goal == 1,na.rm = TRUE) /
+                           sum(goal == 1, na.rm = TRUE), 3),
+    # Medium Goal Rate
+    medium_goal_rate= round(sum(throw_distance > 10 & throw_distance < 35 & goal == 1,na.rm = TRUE) /
+                            sum(goal == 1, na.rm = TRUE), 3), 
+       
     ## Defensive Features
     # Short throw rate — teams that play it safe
-    short_throw_rate = round(sum(throw_distance < 10, na.rm = TRUE) / n(),3),
+    short_throw_rate = round(sum(throw_distance <= 10, na.rm = TRUE) / n(),3),
     #Medium throw rate 
-    medium_throw_rate = round(sum(throw_distance > 10 & throw_distance < 20, na.rm = TRUE) / n(),3),
+    medium_throw_rate = round(sum(throw_distance > 10 & throw_distance < 35, na.rm = TRUE) / n(),3),
     #What is the long shot turnover rate?
-    long_throw_turnover_rate = round(sum(throw_distance > 20 & turnover == 1, na.rm = TRUE) /
-                                       sum(throw_distance > 20,            na.rm = TRUE), 3),
+    long_throw_turnover_rate = round(sum(throw_distance >= 35 & turnover == 1, na.rm = TRUE) /
+                                       sum(throw_distance >= 35,            na.rm = TRUE), 3),
     # What is the medium shot turnover rate?
-    medium_throw_turnover_rate = round(sum(throw_distance > 10 & throw_distance < 20 & turnover == 1, na.rm = TRUE) /
-                                        sum(throw_distance > 10 & throw_distance < 20,na.rm = TRUE), 3),
+    medium_throw_turnover_rate = round(sum(throw_distance > 10 & throw_distance < 35 & turnover == 1, na.rm = TRUE) /
+                                        sum(throw_distance > 10 & throw_distance < 35,na.rm = TRUE), 3),
     #What is the short shot turnover rate?
-    short_throw_turnover_rate = round(sum(throw_distance < 10 & turnover == 1, na.rm = TRUE) /
-                                      sum(throw_distance > 10,            na.rm = TRUE), 3),
+    short_throw_turnover_rate = round(sum(throw_distance <= 10 & turnover == 1, na.rm = TRUE) /
+                                      sum(throw_distance  <= 10,            na.rm = TRUE), 3),
     
     ## Game Momentum Features (TBD - Add with time stamp and also with the num_possession -> sequence)
     # Goals scored per quarter - who starts strong vs finishes strong?
@@ -199,6 +204,7 @@ full_team_stats <- team_stats |>
 
 # 9. Visualization for Teams Overview ------------------------------------------
 
+## Creatw a win pct
 #a) Teams Overview for Total Losses and Total Wins (make it better)
 
 full_team_stats |>
@@ -222,28 +228,239 @@ full_team_stats |>
 #right top - risky (score a lot but also struggle with turnovers)
 #left bottom - safe (can't score but do not make turnovers)
 #riht bottom - struggling (hard to score and make a lot of turnovers)
-ggplot(full_team_stats, aes(
-  x = turnover_ratio,
-  y = goal_ratio,
-  size = win_pct,
-  label = team))+
-  geom_point(alpha = 0.8)+
-  geom_text(vjust = -1, size = 3) +
-  coord_fixed()+
-  theme_minimal()
+
+#1. Loading Library 
+library(ggimage)
+
+#2. Recreate logo paths
+team_logos <- tibble(
+  team = c(
+    "alleycats", "aviators",  "breeze",      "cannons",
+    "cascades",  "empire",    "flyers",      "glory",
+    "growlers",  "havoc",     "hustle",      "legion",
+    "mechanix",  "nitro",     "outlaws",     "phoenix",
+    "radicals",  "royal",     "rush",        "shred",
+    "sol",       "spiders",   "summit",      "thunderbirds",
+    "union",     "windchill"
+  ),
+  logo_url = paste0(getwd(), "/logos/", team, ".png")
+)
+
+#3. Creating a dataframe for the ggplot with a new plot_data
+plot_data <- full_team_stats |>
+  left_join(team_logos, by = "team")
+
+#4.1 Creating a Median for a Goal Ratio
+med_goal     <- median(plot_data$goal_ratio, na.rm = TRUE)
+
+#4.2 Creating a Median for a Turnover Ratio
+med_turnover <- median(plot_data$turnover_ratio, na.rm = TRUE)
 
 
-#c) Heat map for the Quarters -> teams and goals by quater 
+#5. Scatterplot 
+ggplot(plot_data, aes(x = turnover_ratio, y = goal_ratio)) +
+  
+  # Quadrant shading
+  annotate("rect",
+           xmin = -Inf,         xmax = med_turnover,
+           ymin = med_goal,     ymax = Inf,
+           fill = "darkgreen",  alpha = 0.05) +
+  annotate("rect",
+           xmin = med_turnover, xmax = Inf,
+           ymin = med_goal,     ymax = Inf,
+           fill = "orange",     alpha = 0.05) +
+  annotate("rect",
+           xmin = -Inf,         xmax = med_turnover,
+           ymin = -Inf,         ymax = med_goal,
+           fill = "steelblue",  alpha = 0.05) +
+  annotate("rect",
+           xmin = med_turnover, xmax = Inf,
+           ymin = -Inf,         ymax = med_goal,
+           fill = "firebrick",  alpha = 0.05) +
+  
+  #Median lines 
+  geom_vline(xintercept = med_turnover,
+             linetype = "dashed", color = "gray40", linewidth = 0.6) +
+  geom_hline(yintercept = med_goal,
+             linetype = "dashed", color = "gray40", linewidth = 0.6) +
+  
+  # Team logos
+  geom_image(aes(image = logo_url), size = 0.07, asp = 1.5) +
+  
+  # Quadrant labels
+  annotate("text",
+           x = min(plot_data$turnover_ratio),
+           y = max(plot_data$goal_ratio),
+           label = "ELITE",      hjust = 0, vjust = 1,
+           color = "darkgreen",  fontface = "bold", size = 4) +
+  annotate("text",
+           x = max(plot_data$turnover_ratio),
+           y = max(plot_data$goal_ratio),
+           label = "RISK_TAKING",    hjust = 1, vjust = 1,
+           color = "orange",     fontface = "bold", size = 4) +
+  annotate("text",
+           x = min(plot_data$turnover_ratio),
+           y = min(plot_data$goal_ratio),
+           label = "PASSIVE",    hjust = 0, vjust = 0,
+           color = "steelblue",  fontface = "bold", size = 4) +
+  annotate("text",
+           x = max(plot_data$turnover_ratio),
+           y = min(plot_data$goal_ratio),
+           label = "STRUGGLING", hjust = 1, vjust = 0,
+           color = "firebrick",  fontface = "bold", size = 4) +
+  
+  #Labels & theme
+  labs(
+    title    = "UFA Team Efficiency",
+    subtitle = "Dashed lines = league median",
+    x        = " Turnover Ratio",
+    y        = "Goal Ratio",
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),  
+    plot.subtitle = element_text(face = "italic", size = 10, color = "gray40",hjust = 0.5),  
+    panel.grid    = element_line(color = "gray90"))
 
-#d) Heat map for thr Turnovers -> teams and goals by quarter (maybe cutting by teams who played > n games)
 
- 
-#e) Throw Profile per team by creating a bar stack of the short,medium, long throw -> tune the range of the distance
+#c) Throw type based on the teams stack bar
+# idea of pointing out the teams we are choosing for presentation
+full_team_stats|>
+  select(team, win_pct, short_throw_rate, medium_throw_rate, long_throw_rate) |>
+  pivot_longer(-c(team, win_pct), names_to = "throw_type", values_to = "rate") |>
+  mutate(throw_type = recode(throw_type,
+                             "short_throw_rate"  = "Short (=<10)",
+                             "medium_throw_rate" = "Medium (10-35)",
+                             "long_throw_rate"   = "Long (>=35)"
+  )) |>
+  ggplot(aes(x = reorder(team, win_pct),   # reorder teams by win_pct
+             y = rate,                  
+             fill = throw_type)) +      
+  geom_col(position = "fill") +
+  geom_text(aes(label = scales::percent(rate, accuracy = 1)),
+            position = position_fill(vjust = 0.5),
+            size = 2.5, color = "white", fontface = "bold") +
+  scale_y_continuous(labels = scales::percent) +
+  coord_flip()+
+  labs(
+    title    = "Throw Profile by Team",
+    subtitle = "Distribution of short, medium and long throws",
+    x        = "Team",
+    y        = "Proportion of Throws",
+    fill     = "Throw Type"
+  ) +
+  theme_minimal()+
+  theme(                                  
+    plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(face = "italic", size = 12, hjust = 0.5),
+    axis.text.x   = element_text(face = "italic", size = 10),
+    axis.text.y   = element_text(face = "italic", size = 10),
+    axis.title.x  = element_text(face = "bold", size = 12),
+    axis.title.y  = element_text(face = "bold", size = 12),
+    legend.position  = "bottom",
+    legend.title     = element_text(face = "bold"),
+  )
 
+#d) Throw Rate by Goal
+
+full_team_stats|>
+  select(team, win_pct, short_goal_rate, medium_goal_rate, long_goal_rate) |>
+  pivot_longer(-c(team, win_pct), names_to = "throw_type", values_to = "rate") |>
+  mutate(throw_type = recode(throw_type,
+                             "short_throw_rate"  = "Short (=<10)",
+                             "medium_throw_rate" = "Medium (10-35)",
+                             "long_throw_rate"   = "Long (>=35)"
+  )) |>
+  ggplot(aes(x = reorder(team, win_pct),   # reorder teams by win_pct
+             y = rate,                  
+             fill = throw_type)) +      
+  geom_col(position = "fill") +
+  geom_text(aes(label = scales::percent(rate, accuracy = 1)),
+            position = position_fill(vjust = 0.5),
+            size = 2.5, color = "white", fontface = "bold") +
+  scale_y_continuous(labels = scales::percent) +
+  coord_flip()+
+  labs(
+    title    = "Throw Profile by Team",
+    subtitle = "Distribution of short, medium and long throws",
+    x        = "Team",
+    y        = "Proportion of Throws",
+    fill     = "Throw Type"
+  ) +
+  theme_minimal()+
+  theme(                                  
+    plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(face = "italic", size = 12, hjust = 0.5),
+    axis.text.x   = element_text(face = "italic", size = 10),
+    axis.text.y   = element_text(face = "italic", size = 10),
+    axis.title.x  = element_text(face = "bold", size = 12),
+    axis.title.y  = element_text(face = "bold", size = 12),
+    legend.position  = "bottom",
+    legend.title     = element_text(face = "bold"),
+  )
+
+# e) Turnover rate by the throw -> scale percent
+full_team_stats|>
+  select(team, win_pct, short_throw_turnover_rate, medium_throw_turnover_rate, long_throw_turnover_rate) |>
+  pivot_longer(-c(team, win_pct), names_to = "throw_type", values_to = "rate") |>
+  mutate(throw_type = recode(throw_type,
+                             "short_throw_rate"  = "Short (=<10)",
+                             "medium_throw_rate" = "Medium (10-35)",
+                             "long_throw_rate"   = "Long (>=35)"
+  )) |>
+  ggplot(aes(x = reorder(team, win_pct),   # reorder teams by win_pct
+             y = rate,                  
+             fill = throw_type)) +      
+  geom_col(position = "fill") +
+  geom_text(aes(label = scales::percent(rate, accuracy = 1)),
+            position = position_fill(vjust = 0.5),
+            size = 2.5, color = "white", fontface = "bold") +
+  scale_y_continuous(labels = scales::percent) +
+  coord_flip()+
+  labs(
+    title    = "Throw Profile by Team",
+    subtitle = "Distribution of short, medium and long throws",
+    x        = "Team",
+    y        = "Proportion of Throws",
+    fill     = "Throw Type"
+  ) +
+  theme_minimal()+
+  theme(                                  
+    plot.title    = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(face = "italic", size = 12, hjust = 0.5),
+    axis.text.x   = element_text(face = "italic", size = 10),
+    axis.text.y   = element_text(face = "italic", size = 10),
+    axis.title.x  = element_text(face = "bold", size = 12),
+    axis.title.y  = element_text(face = "bold", size = 12),
+    legend.position  = "bottom",
+    legend.title     = element_text(face = "bold"),
+  )
 
 #f) Goal difference (column +-) - like in the pdf - ranking (lolipop)
-
-
+plot_data |>
+  ggplot(aes(x = reorder(team, plus_minus), y = plus_minus))+
+  geom_segment(aes(xend = team, y = 0, yend = plus_minus, color = plus_minus > 0),linewidth = 1.5)+
+  geom_image(aes(image = logo_url)) + # logos instead of points
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray") +
+  scale_color_manual(values = c("TRUE" = "darkgreen", "FALSE" = "salmon")) +
+  scale_y_continuous(breaks = seq(-500, 275, by = 50))+
+  coord_flip()+
+  guides(color = "none") + 
+  labs(
+    title = "Goal Differential (+/-) by Team",
+    subtitle = "2021 - 2024 Season",
+    x = "Team", y = "+/-"
+  ) +
+  theme_minimal()+
+  theme_bw()+
+  theme(
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+    plot.subtitle = element_text(face = "italic", size = 10, hjust = 0.5),
+    axis.text.x = element_text(face = "italic", size = 10),
+    axis.text.y = element_text(face = "italic", size = 10),
+    axis.title.x = element_text(face = "bold", size = 12),
+    axis.title.y = element_text(face = "bold", size = 12))
+    
 #g) Home vs Away Win%  -> column to see where teams have better performance
 
 #h) Correaltion map
@@ -274,4 +491,23 @@ ggplot(full_team_stats, aes(
 #d) Clustering
 # - Team playstyle clusters (aggressive/defensive/balanced)
 # -  Player role clusters (hybrid/handler/cutter)
+
+
+# 11. Exploring for me based on the lectures  ----------------------------------
+
+# a) Doing more with group_by() and summarize() -> Lecture 2
+# b) Better looking tables with gt(), rename() -> customize tables -> Lecture 2
+# c) Visualizing 1D categorical data -> geom_bar() -> Lecture 3 
+# d) Visualizing 2D categorical data -> geom_col(), stack bar -> Lecture 3
+# e) Train with pivot_wider() and pivot_longer() -> Lecture 3
+# f) Heatmaps (geom_tile) -> Lecture 3
+# g) Mosaic Plot -> Lecture 3
+# h) Facets -> Many Plots -> Lecture 3
+# i) Boxplots -> Lecture 4
+# j) Histograms , Density, Beeswarm, ECDF plot (1D and 2D), ridgeline plot -> Lecture 4
+# k) scatterplot + regression -> Lecture 4
+# l) creating a denisty heatmap of throws, creating a hexagonal_heatmaps -> Lecture 5
+# m) k-means clustering -> Lecture 6
+# n) dendogram trees -> Lecture 7
+# o) soft clustering -> Lecture 8
 
