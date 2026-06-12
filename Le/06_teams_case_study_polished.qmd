@@ -327,25 +327,25 @@ successful_throws
 ```{r}
 # DO NOT RUN UNTIL I HAVE MADE ENOUGH CHANGES #
 
-successful_throws |>
+#successful_throws |>
   
-  ggplot() + full_frisbee_field +
-  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y), alpha = 0.8) +
-  facet_wrap(~ team_in_possession, nrow = 1, axes = "all_y") +
-  scale_fill_brewer(palette = "RdYlGn", direction = -1) +
+  #ggplot() + full_frisbee_field +
+  #geom_density_2d_filled(aes(x = thrower_x, y = thrower_y), alpha = 0.8) +
+  #facet_wrap(~ team_in_possession, nrow = 1, axes = "all_y") +
+  #scale_fill_brewer(palette = "RdYlGn", direction = -1) +
   
-  labs(title = "Where successful throws are made",
-       subtitle = "Initial throw locations of all completed throws for two Ultimate Frisbee teams",
-       caption = "Data courtesy of Ultimate Frisbee Association & Eberhard, Miller, and Sandholtz (2025).",
-       x = "Distance from the middle of the field in yards (positive = right side)",
-       y = "Distance from backline at team's own end zone in yards") +
+  #labs(title = "Where successful throws are made",
+       #subtitle = "Initial throw locations of all completed throws for two Ultimate Frisbee teams",
+       #caption = "Data courtesy of Ultimate Frisbee Association & Eberhard, Miller, and Sandholtz (2025).",
+       #x = "Distance from the middle of the field in yards (positive = right side)",
+       #y = "Distance from backline at team's own end zone in yards") +
   
-  theme(strip.background = element_blank(),
-        panel.grid = element_blank(),
-        panel.spacing = unit(2, "lines"),
-        plot.title = element_text(hjust = 0.5, face = "bold"),
-        plot.subtitle = element_text(hjust = 0.5, face = "italic"),
-        legend.position = "none")
+  #theme(strip.background = element_blank(),
+        #panel.grid = element_blank(),
+        #panel.spacing = unit(2, "lines"),
+        #plot.title = element_text(hjust = 0.5, face = "bold"),
+        #plot.subtitle = element_text(hjust = 0.5, face = "italic"),
+        #legend.position = "none")
 ```
 
 #### Bonus: Motivation for the case study
