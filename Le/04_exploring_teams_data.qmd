@@ -151,26 +151,34 @@ tactics_features <- ufa_clean|>
     # Average throw angle
     avg_throw_angle = round(mean(abs(throw_angle), na.rm = TRUE),3),
     # How often they attempt long throws -> (I assume long throw is >20)
-    long_throw_rate = round(sum(throw_distance > 20, na.rm = TRUE) / n(),3),
+    long_throw_rate = round(sum(throw_distance >= 35, na.rm = TRUE) / n(),3),
     # Long Goal Rate 
-    long_goal_rate        = round(sum(throw_distance > 20 & goal == 1,na.rm = TRUE) /
-                                    sum(goal == 1,                      na.rm = TRUE), 3),
+    long_goal_rate = round(sum(throw_distance >= 35 & goal == 1,na.rm = TRUE) /
+                             sum(goal == 1, na.rm = TRUE), 3),
     
-          
+      
     ## Defensive Features
     # Short throw rate — teams that play it safe
-    short_throw_rate = round(sum(throw_distance < 10, na.rm = TRUE) / n(),3),
+    short_throw_rate = round(sum(throw_distance <= 10, na.rm = TRUE) / n(),3),
+    # Short Goal Rate 
+    short_goal_rate = round(sum(throw_distance <= 10 & goal == 1,na.rm = TRUE) /
+                             sum(goal == 1, na.rm = TRUE), 3),
+    
     #Medium throw rate 
-    medium_throw_rate = round(sum(throw_distance > 10 & throw_distance < 20, na.rm = TRUE) / n(),3),
+    medium_throw_rate = round(sum(throw_distance > 10 & throw_distance < 35, na.rm = TRUE) / n(),3),
+    # Medium Goal Rate 
+    medium_goal_rate = round(sum(throw_distance > 10 & throw_distance < 35 & goal == 1,na.rm = TRUE) /
+                             sum(goal == 1, na.rm = TRUE), 3),
+    
     #What is the long shot turnover rate?
-    long_throw_turnover_rate = round(sum(throw_distance > 20 & turnover == 1, na.rm = TRUE) /
-                                       sum(throw_distance > 20,            na.rm = TRUE), 3),
+    long_throw_turnover_rate = round(sum(throw_distance >= 35 & turnover == 1, na.rm = TRUE) /
+                                       sum(throw_distance >=35,            na.rm = TRUE), 3),
     # What is the medium shot turnover rate?
     medium_throw_turnover_rate = round(sum(throw_distance > 10 & throw_distance < 20 & turnover == 1, na.rm = TRUE) /
                                         sum(throw_distance > 10 & throw_distance < 20,na.rm = TRUE), 3),
     #What is the short shot turnover rate?
-    short_throw_turnover_rate = round(sum(throw_distance < 10 & turnover == 1, na.rm = TRUE) /
-                                      sum(throw_distance > 10,            na.rm = TRUE), 3),
+    short_throw_turnover_rate = round(sum(throw_distance <= 10 & turnover == 1, na.rm = TRUE) /
+                                      sum(throw_distance >= 10,            na.rm = TRUE), 3),
     
     ## Game Momentum Features (TBD - Add with time stamp and also with the num_possession -> sequence)
     # Goals scored per quarter - who starts strong vs finishes strong?
