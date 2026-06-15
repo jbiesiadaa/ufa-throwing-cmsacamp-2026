@@ -1,0 +1,264 @@
+---
+title: "02_Creating_Team_Level_Data_Frame"
+subtitle: "Carnegie Mellon Sports Analytics Camp (CMSACamp) 2026"
+author: "Julia Biesiada"
+date: "June 14, 2026"
+format: html
+---
+**In this file, I created a team-level data frame to summarize overall team statistics. The main goal was to focus on each team and better understand how they performed across the dataset.**
+
+# 0. Data Loading
+```{r}
+library(tidyverse)
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+
+```
+# 1. Filter out all-star games once 
+
+This section removes all-star games from the dataset so the analysis only focuses on regular UFA team games.
+
+```{r}
+ufa_clean <- ufa_throws |>
+  filter(home_teamID != "allstars2",
+         away_teamID != "allstars1")
+```
+
+# 2.Home goals scored & conceded per game, then summed
+
+This section calculates how many goals each team scored and allowed when playing at home.
+
+```{r}
+home_score <- ufa_clean |>
+  group_by(home_teamID, gameID) |>
+  summarise(
+    goals_scored   = max(home_team_score, na.rm = TRUE),
+    goals_conceded = max(away_team_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(home_teamID) |>
+  summarise(
+    total_goals_scored   = sum(goals_scored),
+    total_goals_conceded = sum(goals_conceded),
+    .groups = "drop"
+  ) |>
+  rename(team = home_teamID)
+```
+
+# 3. Away goals scored & conceded per game, then summed
+
+This section calculates how many goals each team scored and allowed when playing away.
+
+```{r}
+away_score <- ufa_clean |>
+  group_by(away_teamID, gameID) |>
+  summarise(
+    goals_scored   = max(away_team_score, na.rm = TRUE),
+    goals_conceded = max(home_team_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(away_teamID) |>
+  summarise(
+    total_goals_scored   = sum(goals_scored),
+    total_goals_conceded = sum(goals_conceded),
+    .groups = "drop"
+  ) |>
+  rename(team = away_teamID)
+```
+
+# 4. Combined goals (home + away)
+
+This section combines home and away scoring data to get each team’s total goals scored and total goals conceded.
+
+```{r}
+combined_goals <- bind_rows(home_score, away_score) |>
+  group_by(team) |>
+  summarise(
+    total_goals_scored   = sum(total_goals_scored),
+    total_goals_conceded = sum(total_goals_conceded),
+    .groups = "drop"
+  )
+```
+
+# 5. Home/Away split stats
+
+This section separates team performance by location, showing how each team performed at home compared to away games.
+
+```{r}
+split_stats <- ufa_clean |>
+  mutate(
+    team     = if_else(is_home_team == TRUE, home_teamID, away_teamID),
+    location = if_else(is_home_team == TRUE, "home", "away"),
+    win      = (is_home_team == TRUE  & home_team_win == 1) |
+      (is_home_team == FALSE & home_team_win == 0)
+  ) |>
+  group_by(team, location) |>
+  summarise(
+    games     = n_distinct(gameID),
+    wins      = n_distinct(gameID[win]),
+    losses    = games - wins,
+    throws    = sum(turnover == 0 & goal == 0, na.rm = TRUE),
+    turnovers = sum(turnover == 1, na.rm = TRUE),
+    .groups   = "drop"
+  ) |>
+  pivot_wider(
+    names_from  = location,
+    values_from = c(games, wins, losses, throws, turnovers),
+    names_glue  = "{location}_{.value}"          # e.g. home_games, away_wins
+  )
+```
+
+# 6. Core team stats
+
+This section calculates each team’s total games, wins, losses, throws, turnovers, goals scored, and goals conceded. (6.1)
+
+I also created new performance metrics such as win percentage, goal rate, turnover rate, throws per goal, and plus/minus to better compare teams. (6.2)
+
+```{r}
+#6.1 General Stats 
+team_stats_core <- ufa_clean |>
+  mutate(
+    team = if_else(is_home_team == TRUE, home_teamID, away_teamID),
+    win  = (is_home_team == TRUE  & home_team_win == 1) |
+      (is_home_team == FALSE & home_team_win == 0)
+  ) |>
+  group_by(team) |>
+  summarise(
+    total_games     = n_distinct(gameID),
+    total_wins      = n_distinct(gameID[win]),
+    total_losses    = total_games - total_wins,
+    total_throws    = sum(turnover == 0 & goal == 0, na.rm = TRUE),
+    total_turnovers = sum(turnover == 1, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# 6.2 Adding New Performance Metrics
+team_stats <- team_stats_core |>
+  left_join(combined_goals, by = "team") |>
+  left_join(split_stats,    by = "team") |>
+  mutate(
+    # Ratio: goals scored per throw attempt
+    goal_rate          = round(total_goals_scored / (total_throws + total_goals_scored + total_turnovers), 3),
+    
+    # Ratio: turnovers per total possession attempts
+    turnover_rate      = round(total_turnovers / (total_throws + total_goals_scored + total_turnovers), 3),
+    
+    # Throws per goal: How many throws take to score a goal?
+    throws_per_goal = round(total_throws / total_goals_scored,1),
+    
+    # +/- box score: goals scored minus goals conceded across all games
+    plus_minus          = total_goals_scored - total_goals_conceded,
+    
+    # Win percentage
+    win_pct             = round(total_wins / total_games,3)
+  ) |>
+  # Tidy column order
+  select(
+    team,
+    total_games, total_wins, total_losses, win_pct,
+    total_throws,throws_per_goal, total_turnovers,
+    total_goals_scored, total_goals_conceded, plus_minus,
+    goal_rate, turnover_rate,
+    home_games, home_wins, home_losses, home_throws, home_turnovers,
+    away_games, away_wins, away_losses, away_throws, away_turnovers
+  )
+
+```
+
+# 7. Adding Tactical Features
+
+This section creates tactical features to describe each team’s playing style beyond basic wins and losses. I calculated average throw distance, average goal distance, average turnover distance, and average throw angle to better understand how each team moves the disc.
+
+I also separated throws into short, medium, and long categories using thresholds that I chose for this analysis. **Short throws are 10 yards or less, medium throws are between 11 and 34 yards, and long throws are 35 yards or more.** These categories help compare whether teams play more safely with shorter throws or take more aggressive throws. The goal rates and turnover rates by throw distance help show which types of throws are most successful or risky for each team.
+
+Finally, I added quarter-based statistics to look at game momentum. Goals and turnovers by quarter help identify when teams tend to score the most, lose possession, or perform strongest during a game.
+
+```{r}
+tactics_features <- ufa_clean|>
+  mutate(team = if_else(is_home_team == TRUE, home_teamID, away_teamID)) |>
+  group_by(team) |>
+  summarise( 
+    
+    ## Offensive Features
+    # Average throw distance on ALL throws
+    avg_throw_distance = round(mean(throw_distance, na.rm = TRUE),2),
+    # Average throw distance specifically on GOALS
+    avg_goal_distance = round(mean(throw_distance[goal == 1], na.rm = TRUE),2),
+    # Average throw distance on TURNOVERS 
+    avg_turnover_distance = round(mean(throw_distance[turnover == 1], na.rm = TRUE),2),
+    # Average throw angle
+    avg_throw_angle = round(mean(abs(throw_angle), na.rm = TRUE),3),
+    # What rate they attempt long throws?
+    long_throw_rate = round(sum(throw_distance >= 35, na.rm = TRUE) / n(),3),
+        # Long Goal Rate 
+    long_goal_rate= round(sum(throw_distance >= 35 & goal == 1,na.rm = TRUE) /
+                          sum(throw_distance >= 35, na.rm = TRUE), 3),
+    # Short Goal Rate 
+    short_goal_rate= round(sum(throw_distance <= 10 & goal == 1,na.rm = TRUE)/
+                             sum(throw_distance >= 35, na.rm = TRUE),3),
+    # Medium Goal Rate
+    medium_goal_rate= round(sum(throw_distance > 10 & throw_distance < 35 & goal == 1,
+    na.rm = TRUE) /sum(throw_distance > 10 & throw_distance < 35, na.rm = TRUE), 3), 
+       
+    ## Defensive Features
+    # Short throw rate — teams that play it safe
+    short_throw_rate = round(sum(throw_distance <= 10, na.rm = TRUE) / n(),3),
+    #Medium throw rate 
+    medium_throw_rate = round(sum(throw_distance > 10 & throw_distance < 35, na.rm = TRUE) /        n(),3),
+    #What is the long shot turnover rate?
+    long_throw_turnover_rate = round(sum(throw_distance >= 35 & turnover == 1, na.rm = TRUE) /
+    sum(throw_distance >= 35,            na.rm = TRUE), 3),
+    # What is the medium shot turnover rate?
+    medium_throw_turnover_rate = round(sum(throw_distance > 10 & throw_distance < 35 & turnover     == 1, na.rm = TRUE) / sum(throw_distance > 10 & throw_distance < 35,na.rm = TRUE), 3),
+    #What is the short shot turnover rate?
+    short_throw_turnover_rate = round(sum(throw_distance <= 10 & turnover == 1, na.rm = TRUE) /
+                                      sum(throw_distance  <= 10,na.rm = TRUE), 3),
+    
+    # Goals scored per quarter - who starts strong vs finishes strong?
+    goals_q1 = sum(goal == 1 & game_quarter == 1, na.rm = TRUE),
+    goals_q2 = sum(goal == 1 & game_quarter == 2, na.rm = TRUE),
+    goals_q3 = sum(goal == 1 & game_quarter == 3, na.rm = TRUE),
+    goals_q4 = sum(goal == 1 & game_quarter == 4, na.rm = TRUE),
+    goals_q5 = sum(goal == 1 & game_quarter == 5, na.rm = TRUE),
+    # Turnovers per quarter - when do they lose concentration?
+    turnovers_q1 = sum(turnover == 1 & game_quarter == 1, na.rm = TRUE),
+    turnovers_q2 = sum(turnover == 1 & game_quarter == 2, na.rm = TRUE),
+    turnovers_q3 = sum(turnover == 1 & game_quarter == 3, na.rm = TRUE),
+    turnovers_q4 = sum(turnover == 1 & game_quarter == 4, na.rm = TRUE),
+    turnover_q5 = sum(turnover == 1 & game_quarter == 5, na.rm = TRUE),
+    # Power quarter — which quarter do they score most?
+    power_quarter = case_when(
+      goals_q1 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q1",
+      goals_q2 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q2",
+      goals_q3 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q3",
+      goals_q4 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q4"
+    ),
+    
+    # Turnover quarter - which quarter do they turnover the most?
+    turnovers_quarter = case_when(
+      turnovers_q1 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q1",
+      turnovers_q2 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q2",
+      turnovers_q3 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q3",
+      turnovers_q4 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q4"
+    ))
+
+```
+
+# 8.Combining Team Stats and Tactical Features
+
+This section combines the main team statistics with the tactical features into one final data frame (48 variables and 26 observations - teams). This final dataset can be used for team comparison, visualization, and further analysis.
+
+
+```{r}
+full_team_stats <- team_stats |>
+  left_join(tactics_features, by = "team")
+
+print(full_team_stats)
+```
+
+# 9. Creating a CSV File for Future Use
+
+This section saves the final team-level data frame as a CSV file. This makes it easier to use the cleaned and summarized team statistics later for visualization, modeling, or additional analysis.
+
+```{r}
+write.csv(full_team_stats, file = "full_team_stats.csv", row.names = FALSE)
+```

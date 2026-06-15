@@ -1,0 +1,559 @@
+---
+format: gfm
+---
+
+### I. DATA WRANGLING
+
+Julia's original code to create the dataset:
+
+```{r}
+###Julia Biesiada
+### Title: Data Wrangling - Teams Overviews
+
+## -- 0. Data Loading-----------------------------------------------------------
+library(tidyverse)
+library(ggplot2)
+library(ggimage) # I added this myself, not part of Julia's code
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+
+# -- 1. Filter out all-star games once -----------------------------------------
+ufa_clean <- ufa_throws |>
+  filter(home_teamID != "allstars2",
+         away_teamID != "allstars1")
+
+# -- 2. Home goals scored / conceded per game, then summed ---------------------
+home_score <- ufa_clean |>
+  group_by(home_teamID, gameID) |>
+  summarise(
+    goals_scored   = max(home_team_score, na.rm = TRUE),
+    goals_conceded = max(away_team_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(home_teamID) |>
+  summarise(
+    total_goals_scored   = sum(goals_scored),
+    total_goals_conceded = sum(goals_conceded),
+    .groups = "drop"
+  ) |>
+  rename(team = home_teamID)
+
+# -- 3. Away goals scored / conceded per game, then summed----------------------
+away_score <- ufa_clean |>
+  group_by(away_teamID, gameID) |>
+  summarise(
+    goals_scored   = max(away_team_score, na.rm = TRUE),
+    goals_conceded = max(home_team_score, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  group_by(away_teamID) |>
+  summarise(
+    total_goals_scored   = sum(goals_scored),
+    total_goals_conceded = sum(goals_conceded),
+    .groups = "drop"
+  ) |>
+  rename(team = away_teamID)
+
+# -- 4. Combined goals (home + away) -------------------------------------------
+combined_goals <- bind_rows(home_score, away_score) |>
+  group_by(team) |>
+  summarise(
+    total_goals_scored   = sum(total_goals_scored),
+    total_goals_conceded = sum(total_goals_conceded),
+    .groups = "drop"
+  )
+# -- 5. Home/Away split stats --------------------------------------------------
+split_stats <- ufa_clean |>
+  mutate(
+    team     = if_else(is_home_team == TRUE, home_teamID, away_teamID),
+    location = if_else(is_home_team == TRUE, "home", "away"),
+    win      = (is_home_team == TRUE  & home_team_win == 1) |
+      (is_home_team == FALSE & home_team_win == 0)
+  ) |>
+  group_by(team, location) |>
+  summarise(
+    games     = n_distinct(gameID),
+    wins      = n_distinct(gameID[win]),
+    losses    = games - wins,
+    throws    = sum(turnover == 0 & goal == 0, na.rm = TRUE),
+    turnovers = sum(turnover == 1, na.rm = TRUE),
+    .groups   = "drop"
+  ) |>
+  pivot_wider(
+    names_from  = location,
+    values_from = c(games, wins, losses, throws, turnovers),
+    names_glue  = "{location}_{.value}"          # e.g. home_games, away_wins
+  )
+
+# -- 6. Core team stats --------------------------------------------------------
+team_stats_core <- ufa_clean |>
+  mutate(
+    team = if_else(is_home_team == TRUE, home_teamID, away_teamID),
+    win  = (is_home_team == TRUE  & home_team_win == 1) |
+      (is_home_team == FALSE & home_team_win == 0)
+  ) |>
+  group_by(team) |>
+  summarise(
+    total_games     = n_distinct(gameID),
+    total_wins      = n_distinct(gameID[win]),
+    total_losses    = total_games - total_wins,
+    total_throws    = sum(turnover == 0 & goal == 0, na.rm = TRUE),
+    total_turnovers = sum(turnover == 1, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+team_stats <- team_stats_core |>
+  left_join(combined_goals, by = "team") |>
+  left_join(split_stats,    by = "team") |>
+  mutate(
+    # Ratio: goals scored per throw attempt
+    goal_ratio          = round(total_goals_scored / (total_throws + total_goals_scored + total_turnovers), 3),
+    
+    # Ratio: turnovers per total possession attempts
+    turnover_ratio      = round(total_turnovers / (total_throws + total_goals_scored + total_turnovers), 3),
+    
+    # Throws per goal: How many throws take to score a goal?
+    throws_per_goal = round(total_throws / total_goals_scored,1),
+    
+    # +/- box score: goals scored minus goals conceded across all games
+    plus_minus          = total_goals_scored - total_goals_conceded,
+    
+    # Win percentage
+    win_pct             = round(total_wins / total_games,3)
+  ) |>
+  # Tidy column order
+  select(
+    team,
+    total_games, total_wins, total_losses, win_pct,
+    total_throws,throws_per_goal, total_turnovers,
+    total_goals_scored, total_goals_conceded, plus_minus,
+    goal_ratio, turnover_ratio,
+    home_games, home_wins, home_losses, home_throws, home_turnovers,
+    away_games, away_wins, away_losses, away_throws, away_turnovers
+  )
+
+team_stats|>
+  mutate(throws_per_goal = total_throws / total_goals_scored)|>
+  select(throws_per_goal)
+
+# 7.Adding Tactical Features ---------------------------------------------------
+
+tactics_features <- ufa_clean|>
+  mutate(team = if_else(is_home_team == TRUE, home_teamID, away_teamID)) |>
+  group_by(team) |>
+  summarise( 
+    ## Offensive Features
+    # Average throw distance on ALL throws
+    avg_throw_distance = round(mean(throw_distance, na.rm = TRUE),2),
+    # Average throw distance specifically on GOALS
+    avg_goal_distance = round(mean(throw_distance[goal == 1], na.rm = TRUE),2),
+    # Average throw distance on TURNOVERS 
+    avg_turnover_distance = round(mean(throw_distance[turnover == 1], na.rm = TRUE),2),
+    # Average throw angle
+    avg_throw_angle = round(mean(abs(throw_angle), na.rm = TRUE),3),
+    # How often they attempt long throws -> (I assume long throw is >20)
+    long_throw_rate = round(sum(throw_distance >= 35, na.rm = TRUE) / n(),3),
+    # Long Goal Rate 
+    long_goal_rate= round(sum(throw_distance >= 35 & goal == 1,na.rm = TRUE) /
+                          sum(goal == 1, na.rm = TRUE), 3),
+    # Short Goal Rate 
+    short_goal_rate= round(sum(throw_distance <= 10 & goal == 1,na.rm = TRUE) /
+                           sum(goal == 1, na.rm = TRUE), 3),
+    # Medium Goal Rate
+    medium_goal_rate= round(sum(throw_distance > 10 & throw_distance < 35 & goal == 1,na.rm = TRUE) /
+                            sum(goal == 1, na.rm = TRUE), 3), 
+       
+    ## Defensive Features
+    # Short throw rate — teams that play it safe
+    short_throw_rate = round(sum(throw_distance <= 10, na.rm = TRUE) / n(),3),
+    #Medium throw rate 
+    medium_throw_rate = round(sum(throw_distance > 10 & throw_distance < 35, na.rm = TRUE) / n(),3),
+    #What is the long shot turnover rate?
+    long_throw_turnover_rate = round(sum(throw_distance >= 35 & turnover == 1, na.rm = TRUE) /
+                                       sum(throw_distance >= 35,            na.rm = TRUE), 3),
+    # What is the medium shot turnover rate?
+    medium_throw_turnover_rate = round(sum(throw_distance > 10 & throw_distance < 35 & turnover == 1, na.rm = TRUE) /
+                                        sum(throw_distance > 10 & throw_distance < 35,na.rm = TRUE), 3),
+    #What is the short shot turnover rate?
+    short_throw_turnover_rate = round(sum(throw_distance <= 10 & turnover == 1, na.rm = TRUE) /
+                                      sum(throw_distance  <= 10,            na.rm = TRUE), 3),
+    
+    ## Game Momentum Features (TBD - Add with time stamp and also with the num_possession -> sequence)
+    # Goals scored per quarter - who starts strong vs finishes strong?
+    goals_q1 = sum(goal == 1 & game_quarter == 1, na.rm = TRUE),
+    goals_q2 = sum(goal == 1 & game_quarter == 2, na.rm = TRUE),
+    goals_q3 = sum(goal == 1 & game_quarter == 3, na.rm = TRUE),
+    goals_q4 = sum(goal == 1 & game_quarter == 4, na.rm = TRUE),
+    goals_q5 = sum(goal == 1 & game_quarter == 5, na.rm = TRUE),
+    # Turnovers per quarter - when do they lose concentration?
+    turnovers_q1 = sum(turnover == 1 & game_quarter == 1, na.rm = TRUE),
+    turnovers_q2 = sum(turnover == 1 & game_quarter == 2, na.rm = TRUE),
+    turnovers_q3 = sum(turnover == 1 & game_quarter == 3, na.rm = TRUE),
+    turnovers_q4 = sum(turnover == 1 & game_quarter == 4, na.rm = TRUE),
+    turnover_q5 = sum(turnover == 1 & game_quarter == 5, na.rm = TRUE),
+    # Power quarter — which quarter do they score most?
+    power_quarter = case_when(
+      goals_q1 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q1",
+      goals_q2 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q2",
+      goals_q3 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q3",
+      goals_q4 == pmax(goals_q1, goals_q2, goals_q3, goals_q4) ~ "Q4"
+    ),
+    
+    # Turnover quarter - which quarter do they turnover the most?
+    turnovers_quarter = case_when(
+      turnovers_q1 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q1",
+      turnovers_q2 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q2",
+      turnovers_q3 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q3",
+      turnovers_q4 == pmax(turnovers_q1, turnovers_q2, turnovers_q3, turnovers_q4) ~ "Q4"
+    ))
+
+# 8.Combining Team Stats and Tactical Features ---------------------------------
+
+full_team_stats <- team_stats |>
+  left_join(tactics_features, by = "team")
+```
+
+Write the team-specific data into a single `.csv` file:
+
+```{r}
+write.csv(full_team_stats, file = "full_team_stats.csv",
+          row.names = FALSE)
+```
+
+#### 1. Read the team statistics data
+
+The original CSV file is created using the `04_exploring_teams_data.qmd` file. Julia aggregated most of the team-specific data, and I added more metrics related to throwing patterns to this dataset.
+
+```{r}
+# Read the file and extract information of different teams
+# (underperforming, mediocre, and elite teams)
+full_team_stats <- read.csv("full_team_stats.csv", sep = ",")
+full_team_stats
+```
+
+```{r}
+# Comparing Empire vs. Cannons for the heat map data
+
+selected_teams = c("empire", "cannons")
+
+selected_team_stats <- full_team_stats |>
+  filter(team %in% selected_teams) |>
+  arrange(desc(win_pct))
+
+selected_team_stats
+```
+
+#### 2. Read and add more metrics to the individual throw data
+
+```{r}
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+ufa_throws
+```
+
+```{r}
+ufa_throws_updated <- ufa_throws |>
+  # Flipping the dataset so that positive x is the right side and negative x
+  # is the left side
+  mutate(thrower_x = (-1) * thrower_x,
+         receiver_x = (-1) * receiver_x,
+         throw_distance = sqrt((receiver_x-thrower_x)^2 + (receiver_y-thrower_y)^2),
+         x_diff = receiver_x - thrower_x,
+         throw_angle = atan2(y_diff, x_diff),
+  # Add the teams in possession data
+         team_in_possession = ifelse(is_home_team == TRUE,
+                                     home_teamID, away_teamID),
+  # Add the throw path type data for individual throws & attack outcome
+         throw_path_type = case_when(
+           (thrower_x >= 0) & (receiver_x >= 0) ~ "right_wing",
+           (thrower_x <= 0) & (receiver_x <= 0) ~ "left_wing",
+           TRUE ~ "cross_throws"
+           ),
+  # Add an identifier for each possession (attacking) phase in the dataset
+  attacking_phaseID = consecutive_id(gameID, game_quarter, is_home_team,
+                                     possession_num, home_team_score,
+                                     away_team_score)) |>
+  # Filter for selected teams
+  filter(team_in_possession %in% selected_teams)
+
+ufa_throws_updated
+```
+
+```{r}
+# Add the attack outcome indicators (unique to each attacking phase ID)
+
+# 1 = successful (leading to a goal)
+# 0 = unsuccessful (ending in a turnover)
+# -1 = incomplete (no goal nor turnover, likely because the quarter/match is ending)
+
+attack_outcome_indicators <- ufa_throws_updated |>
+  select(attacking_phaseID, goal, turnover) |>
+  group_by(attacking_phaseID) |>
+  summarize(sum_goal = sum(goal),
+            sum_turnover = sum(turnover)) |>
+  ungroup() |>
+  mutate(attack_outcome = case_when(
+    sum_goal == 1 ~ 1,
+    sum_goal == 0 & sum_turnover >= 1 ~ 0,
+    sum_goal == 0 & sum_turnover == 0 ~ -1
+  )) |>
+  select(attacking_phaseID, attack_outcome)
+
+attack_outcome_indicators
+```
+
+```{r}
+ufa_throws_updated <- ufa_throws_updated |>
+  left_join(attack_outcome_indicators, join_by(attacking_phaseID))
+
+ufa_throws_updated
+```
+
+### II. DATA ANALYSIS AND VISUALIZATION
+
+#### 0. Define the preset themes for heat maps and clustered bar charts
+
+```{r}
+# https://stackoverflow.com/questions/23173915/can-ggplot-theme-formatting-be-saved-as-an-object
+
+# Draw a circle on the plot with the geom_circle function from the ggforce package
+# install.packages("ggforce")
+library(ggforce)
+
+# Set the classic theme
+theme_set(theme_classic())
+
+# Store the ggplot configurations for future use
+
+#### 1. The upper half of a frisbee field ####
+
+upper_half_frisbee_field <- list(
+  
+  # Limit the scale of variables shown in the plot
+  # For shots, we only consider those made in the top half of the field
+  # because shot data in other areas are so scarce
+  # https://stackoverflow.com/questions/22945651/remove-space-between-plotted-data-and-the-axes
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3), expand = c(0, 0),
+                     breaks = seq(-20, 20, 10)),
+  scale_y_continuous(limits = c(60, 120), expand = c(0, 0),
+                     breaks = seq(60, 120, 10)),
+  
+  # Adding the frisbee field image to the plot
+  # https://stackoverflow.com/questions/32226513/limiting-the-x-axis-range-of-geom-line-defined-by-slope-and-intercept
+  # https://ggforce.data-imaginist.com/reference/geom_circle.html
+  
+  coord_fixed(),
+  
+  # I like the alternating texture of the grass field :)
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 110, ymax = 120, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 100, ymax = 110, fill = "#00aa00"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 90, ymax = 100, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 80, ymax = 90, fill = "#00aa00"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 70, ymax = 80, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 60, ymax = 70, fill = "#00aa00"),
+  
+  geom_segment(x = -(26+2/3), xend = 26+2/3,
+               y = 100, yend = 100,
+               color = "white", linewidth = 1.1),
+  
+  geom_circle(aes(x0 = 0, y0 = 110, r = 0.5), fill = "white", color = "white"),
+  geom_circle(aes(x0 = 0, y0 = 80, r = 0.5), fill = "white", color = "white")
+  
+)
+
+#### 2. The full frisbee field ####
+
+lower_half_frisbee_field <- list(
+  
+  # Overwrite the existing scale of the upper half of the field
+  scale_y_continuous(limits = c(0, 120), expand = c(0, 0),
+                     breaks = seq(0, 120, 10)),
+  
+  # Draw the remaining grass texture to make a full frisbee field
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 50, ymax = 60, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 40, ymax = 50, fill = "#00aa00"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 30, ymax = 40, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 20, ymax = 30, fill = "#00aa00"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 10, ymax = 20, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 0, ymax = 10, fill = "#00aa00"),
+  
+  # Draw the midpoint line and own end line
+  
+  geom_segment(x = -(26+2/3), xend = 26+2/3,
+               y = 60, yend = 60,
+               color = "white", linewidth = 1.1),
+  
+  geom_segment(x = -(26+2/3), xend = 26+2/3,
+               y = 20, yend = 20,
+               color = "white", linewidth = 1.1),
+  
+  # Draw the circles for brick marks and reverse brick marks
+  geom_circle(aes(x0 = 0, y0 = 40, r = 0.5), fill = "white", color = "white"),
+  geom_circle(aes(x0 = 0, y0 = 10, r = 0.5), fill = "white", color = "white")
+  
+)
+
+# Note that we are using the existing upper_half_frisbee_field list, which initially
+# creates a list of lists.
+
+# We need to apply the unlist() function to make it a 1D list to be passed
+# as parameters in our ggplot call.
+```
+
+
+#### 1. Teams' attacking styles through heat maps
+
+```{r}
+# Function to make images more transparent:
+# https://stackoverflow.com/questions/60820565/is-there-a-way-to-add-an-alpha-value-within-geom-image-in-ggplot
+
+transparent <- function(img) {
+  magick::image_fx(img, expression = "0.5*a", channel = "alpha")
+}
+```
+
+
+```{r}
+# Forcing the legend to be displayed on a continuous scale while still showing
+# discrete density data in the heat map: after_stat(level_high)
+# https://ggplot2.tidyverse.org/reference/geom_contour.html
+
+ufa_throws_updated |>
+  
+  # Use the data for Empire and Cannons only, filter with the throws on goal
+  filter(goal == 1, team_in_possession %in% c("empire", "cannons")) |>
+  mutate(team_in_possession = ifelse(
+    team_in_possession == "empire",
+    "New York Empire", "Tampa Bay Cannons"
+    )) |>
+  
+  ggplot() +
+  
+  upper_half_frisbee_field +
+  
+  # The main plot to create the heat map
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y,
+                             fill = after_stat(level_high)),
+                         alpha = 0.8) +
+                         #breaks = seq(0.0001, 0.0011, 0.0001)) +
+  
+  #stat_density_2d_filled(geom = "raster",
+                         #aes(x = thrower_x, y = thrower_y,
+                             #fill = after_stat(density)),
+                         #contour = FALSE,
+                         #alpha = 0.8) +
+  
+  facet_wrap(~ team_in_possession, nrow = 1,
+             axes = "all_y") +
+  # axes = "all_y" to display the y-axis in both plots
+  
+  # Add team logos into the plot
+  #geom_image(data = tibble(thrower_x = -18, thrower_y = 110,
+                           #team_in_possession = "New York Empire"),
+             #aes(x = thrower_x, y = thrower_y, image = "images/empire.png"),
+             #image_fun = transparent, size = 0.3) +
+  
+  # Set the heat map's palette
+  scale_fill_distiller(palette = "RdYlGn", direction = -1,
+                       guide = guide_colorbar(barheight = 10),
+                       labels = scales::label_number()) +
+  # Note that we want to add "Direction = -1" so that Green represents the area
+  # with the lowest density
+  
+  # Add labels to the plot
+  labs(#title = "Where points are scored",
+       #subtitle = "Throw locations of all assists for two Ultimate Frisbee teams",
+       caption = "Data courtesy of Ultimate Frisbee Association & Eberhard, Miller, and Sandholtz (2025).",
+       x = "Distance from center of the field (yards)",
+       y = "Distance from own backline (yards)",
+       fill = "Relative probability that\na goal is scored") +
+  
+  # Get rid of gray background on the top of each facet plot (strip.background)
+  # Remove gridlines from the plots (panel.grid)
+  # Make the legend's title ("Relative probability...") further away from
+  # the color bar (legend.title)
+  theme(strip.background = element_blank(),
+        panel.grid = element_blank(),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, face = "italic"),
+        axis.title.x = element_text(face = "bold"),
+        axis.title.y = element_text(face = "bold"),
+        legend.position = "right",
+        legend.title = element_text(hjust = 0.5, face = "bold",
+                                    margin = margin(b = 10)),
+        strip.text = element_text(size = rel(1.1), face = "bold"))
+  
+  #guides(fill = guide_colorbar(barwidth = 15))
+
+# Save the resulting plot to display in the slides
+ggsave("case_study_scoring_positions.png")
+```
+
+```{r}
+ufa_throws_updated |>
+  
+  # Filter with the throws that make a turnover
+  filter(turnover == 1, team_in_possession %in% c("empire", "cannons")) |>
+  mutate(team_in_possession = ifelse(
+    team_in_possession == "empire",
+    "New York Empire", "Tampa Bay Cannons"
+    )) |>
+  
+  ggplot() +
+  
+  # I will use the entire frisbee field here
+  upper_half_frisbee_field + lower_half_frisbee_field +
+  
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y,
+                             fill = after_stat(level_high)),
+                         alpha = 0.8) +
+  
+  facet_wrap(~ team_in_possession, nrow = 1,
+             axes = "all_y") +
+  
+  scale_fill_distiller(palette = "RdYlGn", direction = -1,
+                       guide = guide_colorbar(barheight = 10),
+                       labels = scales::label_number()) +
+  
+  labs(#title = "Where points are scored",
+       #subtitle = "Throw locations of all assists for two Ultimate Frisbee teams",
+       caption = "Data courtesy of Ultimate Frisbee Association & Eberhard, Miller, and Sandholtz (2025).",
+       x = "Distance from center of the field (yards)",
+       y = "Distance from own backline (yards)",
+       fill = "Relative probability that\na turnover is made") +
+  
+  # panel.spacing to make the two facet plots display further from each other
+  theme(strip.background = element_blank(),
+        panel.grid = element_blank(),
+        panel.spacing = unit(5, "lines"),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, face = "italic"),
+        axis.title.x = element_text(face = "bold"),
+        axis.title.y = element_text(face = "bold"),
+        legend.position = "right",
+        legend.title = element_text(hjust = 0.5, face = "bold",
+                                    margin = margin(b = 10)),
+        strip.text = element_text(size = rel(1.05), face = "bold"))
+  
+ggsave("case_study_turnover_positions.png")
+```

@@ -1,0 +1,353 @@
+---
+format: gfm
+---
+
+```{r}
+rm(list = ls())
+library(tidyverse)
+```
+
+#### How did I choose the teams in the case study?
+
+```{r}
+full_team_stats <- read.csv("full_team_stats.csv", sep = ",")
+full_team_stats
+
+# Elite teams (top 3): empire, shred, breeze. win_pct >= 0.8
+# Mediocre teams (middle 3): radicals, growlers, glory. win_pct >= 0.5
+# Underperforming teams (bottom 3): cannons, nitro, mechanix. win_pct lowest
+
+selected_teams = c("empire", "shred", "breeze",
+                   "radicals", "growlers", "glory",
+                   "cannons", "nitro", "mechanix")
+
+selected_team_stats <- full_team_stats |>
+  filter(team %in% selected_teams) |>
+  arrange(desc(win_pct))
+
+selected_team_stats
+```
+
+```{r}
+ufa_throws <- read_csv("https://raw.githubusercontent.com/36-SURE/2026/main/data/ufa_throws.csv")
+ufa_throws
+```
+
+```{r}
+ufa_throws_updated <- ufa_throws |>
+  # Flipping the dataset so that positive x is the right side and negative x
+  # is the left side
+  mutate(thrower_x = (-1) * thrower_x,
+         receiver_x = (-1) * receiver_x,
+         throw_distance = sqrt((receiver_x-thrower_x)^2 + (receiver_y-thrower_y)^2),
+         x_diff = receiver_x - thrower_x,
+         throw_angle = atan2(y_diff, x_diff),
+  # Add the teams in possession data
+         team_in_possession = ifelse(is_home_team == TRUE,
+                                     home_teamID, away_teamID),
+  # Add the throw path type data for individual throws & attack outcome
+         throw_path_type = case_when(
+           (thrower_x >= 0) & (receiver_x >= 0) ~ "right_wing",
+           (thrower_x <= 0) & (receiver_x <= 0) ~ "left_wing",
+           TRUE ~ "cross_throws"
+           ),
+  attacking_phaseID = consecutive_id(gameID, game_quarter, is_home_team,
+                                     possession_num, home_team_score,
+                                     away_team_score)) |>
+  # Filter for selected teams
+  filter(team_in_possession %in% selected_teams)
+
+ufa_throws_updated
+```
+
+```{r}
+# Add the attack outcome indicators (unique to each attacking phase ID)
+attack_outcome_indicators <- ufa_throws_updated |>
+  select(attacking_phaseID, goal, turnover) |>
+  group_by(attacking_phaseID) |>
+  summarize(sum_goal = sum(goal),
+            sum_turnover = sum(turnover)) |>
+  ungroup() |>
+  mutate(attack_outcome = case_when(
+    sum_goal == 1 ~ 1,
+    sum_goal == 0 & sum_turnover >= 1 ~ 0,
+    sum_goal == 0 & sum_turnover == 0 ~ -1
+  )) |>
+  select(attacking_phaseID, attack_outcome)
+
+attack_outcome_indicators
+```
+
+```{r}
+ufa_throws_updated <- ufa_throws_updated |>
+  left_join(attack_outcome_indicators, join_by(attacking_phaseID))
+
+ufa_throws_updated
+```
+
+We also want to set a specific theme for all frisbee field-related graphs:
+
+#### 0. Define the preset themes for heat maps and clustered bar charts
+
+```{r}
+# https://stackoverflow.com/questions/23173915/can-ggplot-theme-formatting-be-saved-as-an-object
+
+# Draw a circle on the plot with the geom_circle function from the ggforce package
+# install.packages("ggforce")
+library(ggforce)
+
+# Set the classic theme
+theme_set(theme_classic())
+
+# Store the ggplot configurations for future use
+
+#### 1. The upper half of a frisbee field ####
+
+upper_half_frisbee_field <- list(
+  
+  # Limit the scale of variables shown in the plot
+  # For shots, we only consider those made in the top half of the field
+  # because shot data in other areas are so scarce
+  # https://stackoverflow.com/questions/22945651/remove-space-between-plotted-data-and-the-axes
+  scale_x_continuous(limits = c(-(26+2/3), 26+2/3), expand = c(0, 0),
+                     breaks = seq(-20, 20, 10)),
+  scale_y_continuous(limits = c(60, 120), expand = c(0, 0),
+                     breaks = seq(60, 120, 10)),
+  
+  # Adding the frisbee field image to the plot
+  # https://stackoverflow.com/questions/32226513/limiting-the-x-axis-range-of-geom-line-defined-by-slope-and-intercept
+  # https://ggforce.data-imaginist.com/reference/geom_circle.html
+  
+  coord_fixed(),
+  
+  # I like the alternating texture of the grass field :)
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 110, ymax = 120, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 100, ymax = 110, fill = "#00aa00"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 90, ymax = 100, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 80, ymax = 90, fill = "#00aa00"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 70, ymax = 80, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 60, ymax = 70, fill = "#00aa00"),
+  
+  geom_segment(x = -(26+2/3), xend = 26+2/3,
+               y = 100, yend = 100,
+               color = "white", linewidth = 1.1),
+  
+  geom_circle(aes(x0 = 0, y0 = 110, r = 0.5), fill = "white", color = "white"),
+  geom_circle(aes(x0 = 0, y0 = 80, r = 0.5), fill = "white", color = "white")
+  
+)
+
+#### 2. The full frisbee field ####
+
+lower_half_frisbee_field <- list(
+  
+  # Overwrite the existing scale of the upper half of the field
+  scale_y_continuous(limits = c(0, 120), expand = c(0, 0),
+                     breaks = seq(0, 120, 10)),
+  
+  # Draw the remaining grass texture to make a full frisbee field
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 50, ymax = 60, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 40, ymax = 50, fill = "#00aa00"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 30, ymax = 40, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 20, ymax = 30, fill = "#00aa00"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 10, ymax = 20, fill = "#008200"),
+  
+  annotate("rect", xmin = -(26+2/3), xmax = 26+2/3,
+           ymin = 0, ymax = 10, fill = "#00aa00"),
+  
+  # Draw the midpoint line and own end line
+  
+  geom_segment(x = -(26+2/3), xend = 26+2/3,
+               y = 60, yend = 60,
+               color = "white", linewidth = 1.1),
+  
+  geom_segment(x = -(26+2/3), xend = 26+2/3,
+               y = 20, yend = 20,
+               color = "white", linewidth = 1.1),
+  
+  # Draw the circles for brick marks and reverse brick marks
+  geom_circle(aes(x0 = 0, y0 = 40, r = 0.5), fill = "white", color = "white"),
+  geom_circle(aes(x0 = 0, y0 = 10, r = 0.5), fill = "white", color = "white")
+  
+)
+
+# Note that we are using the existing upper_half_frisbee_field list, which initially
+# creates a list of lists.
+
+# We need to apply the unlist() function to make it a 1D list to be passed
+# as parameters in our ggplot call.
+```
+
+```{r}
+ufa_throws_updated |>
+  
+  filter(goal == 1) |>
+  
+  mutate(team_in_possession = as.factor(team_in_possession)) |>
+  mutate(team_in_possession =
+           fct_relevel(team_in_possession,
+                       "empire", "shred", "breeze",
+                       "radicals", "growlers", "glory",
+                       "cannons", "nitro", "mechanix")) |>
+  mutate(team_in_possession = case_when(
+    team_in_possession == "empire" ~ "New York\nEmpire",
+    team_in_possession == "shred" ~ "Salt Lake\nShred",
+    team_in_possession == "breeze" ~ "DC\nBreeze",
+    team_in_possession == "radicals" ~ "Madison\nRadicals",
+    team_in_possession == "growlers" ~ "San Diego\nGrowlers",
+    team_in_possession == "glory" ~ "Boston\nGlory",
+    team_in_possession == "cannons" ~ "Tampa Bay\nCannons",
+    team_in_possession == "nitro" ~ "Portland\nNitro",
+    team_in_possession == "mechanix" ~ "Detroit\nMechanix"
+  )) |>
+  
+  ggplot() +
+  upper_half_frisbee_field +
+  
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y,
+                             fill = after_stat(level_high)),
+                         alpha = 0.8) +
+  
+  facet_wrap(~ team_in_possession, nrow = 3, ncol = 3,
+             axes = "all") +
+  
+  scale_x_continuous(breaks = seq(-20, 20, 20)) +
+  
+  scale_fill_distiller(palette = "RdYlGn", direction = -1,
+                       guide = guide_colorbar(barheight = 10),
+                       labels = scales::label_number()) +
+    
+  labs(caption = "Data courtesy of Ultimate Frisbee Association & Eberhard, Miller, and Sandholtz (2025).",
+       x = "Distance from center of the field (yards)",
+       y = "Distance from own backline (yards)",
+       fill = "Relative probability that\na goal is scored") +
+
+  theme(strip.background = element_blank(),
+        panel.grid = element_blank(),
+        panel.spacing = unit(0.9, "lines"),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, face = "italic"),
+        legend.position = "right",
+        legend.title = element_text(hjust = 0.5, margin = margin(b = 10)))
+  
+ggsave("appendix_scoring_9_teams.png")
+```
+
+```{r}
+ufa_throws_updated |>
+  
+  filter(turnover == 1) |>
+  
+  mutate(team_in_possession = as.factor(team_in_possession)) |>
+  #mutate(team_in_possession =
+           #fct_relevel(team_in_possession,
+                       #"empire", "shred", "breeze",
+                       #"radicals", "growlers", "glory",
+                       #"cannons", "nitro", "mechanix")) |>
+  mutate(team_in_possession = case_when(
+    team_in_possession == "empire" ~ "New York\nEmpire",
+    team_in_possession == "shred" ~ "Salt Lake\nShred",
+    team_in_possession == "breeze" ~ "DC\nBreeze",
+    team_in_possession == "radicals" ~ "Madison\nRadicals",
+    team_in_possession == "growlers" ~ "San Diego\nGrowlers",
+    team_in_possession == "glory" ~ "Boston\nGlory",
+    team_in_possession == "cannons" ~ "Tampa Bay\nCannons",
+    team_in_possession == "nitro" ~ "Portland\nNitro",
+    team_in_possession == "mechanix" ~ "Detroit\nMechanix"
+  )) |>
+  
+  ggplot() +
+  upper_half_frisbee_field + lower_half_frisbee_field +
+  
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y,
+                             fill = after_stat(level_high)),
+                         alpha = 0.8) +
+  
+  facet_wrap(~ team_in_possession,
+             nrow = 1, axes = "all") +
+  
+  scale_x_continuous(breaks = seq(-20, 20, 20)) +
+  scale_y_continuous(breaks = seq(0, 120, 60)) +
+  
+  scale_fill_distiller(palette = "RdYlGn", direction = -1,
+                       guide = guide_colorbar(barwidth = 20),
+                       labels = scales::label_number()) +
+    
+  labs(caption = "Data courtesy of Ultimate Frisbee Association & Eberhard, Miller, and Sandholtz (2025).",
+       x = "Distance from center of the field (yards)",
+       y = "Distance from own backline (yards)",
+       fill = "Relative probability that\na turnover is made") +
+
+  theme(strip.background = element_blank(),
+        panel.grid = element_blank(),
+        panel.spacing = unit(0.85, "lines"),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, face = "italic"),
+        legend.position = "bottom",
+        legend.title = element_text(hjust = 0.5, margin = margin(r = 20)))
+  
+ggsave("appendix_turnover_9_teams.png")
+```
+
+```{r}
+ufa_throws_updated |>
+  
+  filter(goal == 1, team_in_possession %in% c("empire", "cannons")) |>
+  mutate(team_in_possession = ifelse(
+    team_in_possession == "empire",
+    "New York Empire", "Tampa Bay Cannons"
+    )) |>
+  
+  ggplot() +
+  
+  upper_half_frisbee_field + lower_half_frisbee_field +
+  
+  geom_density_2d_filled(aes(x = thrower_x, y = thrower_y,
+                             fill = after_stat(level_high)),
+                         alpha = 0.8) +
+
+  
+  facet_wrap(~ team_in_possession, nrow = 1,
+             axes = "all_y") +
+
+  scale_fill_distiller(palette = "RdYlGn", direction = -1,
+                       guide = guide_colorbar(barheight = 10),
+                       labels = scales::label_number()) +
+  
+  # Add labels to the plot
+  labs(caption = "Data courtesy of Ultimate Frisbee Association & Eberhard, Miller, and Sandholtz (2025).",
+       x = "Distance from center of the field (yards)",
+       y = "Distance from own backline (yards)",
+       fill = "Relative probability that\na goal is scored") +
+
+  theme(strip.background = element_blank(),
+        panel.grid = element_blank(),
+        panel.spacing = unit(5, "lines"),
+        plot.title = element_text(hjust = 0.5, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, face = "italic"),
+        legend.position = "right",
+        legend.title = element_text(hjust = 0.5, margin = margin(b = 10)))
+
+# Save the resulting plot to display in the slides
+ggsave("appendix_case_study_whole_field.png")
+```
