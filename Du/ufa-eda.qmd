@@ -272,6 +272,30 @@ std_player_stats1 <- player_n |>
 ```
 
 ```{r}
+######
+player_kmeans <- function(k) {
+  player_matrix <- std_player_stats |>
+    dplyr::select(where(is.numeric)) |>
+    tidyr::drop_na() |>
+    as.matrix()
+
+  kmeans_results <- kmeans(
+    player_matrix,
+    centers = k,
+    nstart = 30,
+    iter.max = 30
+  )
+
+  tibble(
+    clusters = k,
+    total_wss = kmeans_results$tot.withinss
+  )
+}
+
+kmeans_search <- purrr::map_dfr(1:6, player_kmeans)
+```
+
+```{r}
 # elbow plot to determine the number of clusters 
 player_kmeans <- function(k) {
   kmeans_results <- std_player_stats |>
@@ -303,23 +327,77 @@ set.seed(743932)
 player_kmeans1 <- std_player_stats |>
   #select(avg_n_throw, avg_throw_distance) |>
   kmeans(algorithm = "Hartigan-Wong",
-         centers = 3,
+         centers = 2,
          nstart = 30,
          iter.max = 30)
 
 library(ggimage)
-std_player_stats |>
+library(paletteer)
+library(NatParksPalettes)
+rdylgn_full <- paletteer_d("RColorBrewer::RdYlGn", n = 11)
+rdylgn_two <- rdylgn_full[c(2, 10)]
+rdylgn_three <- rdylgn_full[c(2, 5, 10)]
+
+player_cluster1 <- std_player_stats |>
   mutate(player_clusters = as.factor(player_kmeans1$cluster)) |>
   ggplot(aes(x = avg_n_throw, y = avg_throw_distance, color = player_clusters)) +
   geom_point() +
-  scale_color_colorblind(labels = c("1" = "Hybrid",
-                                    "2" = "Cutter",
-                                    "3" = "Handler")) +
+  # scale_color_brewer(palette = "Set2",
+  #                    labels = c("1" = "Defense",
+  #                               "2" = "Offense")) +
+  scale_color_manual(values = rdylgn_two, 
+                     labels = c("1" = "Defense",
+                                "2" = "Offense")) +
+  # scale_color_brewer(palette = "Set2",
+  #                    labels = c("1" = "Hybrid",
+  #                               "2" = "Cutter",
+  #                               "3" = "Handler")) +
+  # scale_color_manual(values = rdylgn_three,
+  #                    labels = c("1" = "Hybrid",
+  #                               "2" = "Cutter",
+  #                               "3" = "Handler")) +
   theme_minimal() +
   coord_fixed() +
-  annotation_raster(raster = img,
-                    xmin = 2.2, xmax = 2.6,
-                    ymin = 2.6, ymax = 3.0)
+  annotation_raster(raster = img_jwilliams, # marked hybrid 
+                    xmin = 2.0, xmax = 2.8,
+                    ymin = 0.4, ymax = 1.2) +
+  annotation_raster(raster = img_pjanas, # marked handler
+                    xmin = 4.2, xmax = 5.0,
+                    ymin = -0.2, ymax = 0.6) +
+  annotation_raster(raster = img_jbabbitt, # marked defender (a best overall cutter in 2023 sn)
+                    xmin = -0.3, xmax = 0.5,
+                    ymin = -0.95, ymax = -0.15) +
+  annotation_raster(raster = img_owatt, # marked cutter (clustered as handler)
+                    xmin = -0.8, xmax = 0,
+                    ymin = 1.9, ymax = 2.7) +
+  annotation_raster(raster = img_rkirkpatr, # marked defender
+                    xmin = -1.4, xmax = -0.6,
+                    ymin = -2.8, ymax = -2) +
+  annotation_raster(raster = img_nhanson, # marked cutter (but said to be important defender)
+                    xmin = -1, xmax = -0.2,
+                    ymin = 0.2, ymax = 1) +
+  labs(x = "Standardized Average Number of Throws Per Game", y = "Standardized Average\nThrow Distance (yards)", color = "Player Archetype") +
+  theme(
+    panel.background = element_rect(fill = "transparent", color = NA), 
+    plot.background  = element_rect(fill = "transparent", color = NA),
+    legend.background = element_rect(fill = "transparent", color = NA), 
+    legend.box.background = element_rect(fill = "transparent", color = NA),
+    plot.margin = margin(t = 10, r = 10, b = 10, l = 20, unit = "pt"),
+    axis.title.x = element_text(face = "bold", size = 25, margin = margin(t = 15, r = 10), hjust = 0.4),
+    axis.title.y = element_text(face = "bold", size = 25, margin = margin(r = 15)),
+    axis.text = element_text(size = 23),
+    legend.title = element_text(face = "bold", size = 25),
+    legend.text = element_text(size = 25),
+  )
+
+ggsave(filename = "player_cluster1.png",
+       plot = player_cluster1,
+       bg = "transparent",
+       width = 10,
+       height = 14,
+       dpi = 300)
+
+# mbuyco - marked cutter, clustered as handler
   # geom_image(
   #   data = img_data,
   #   aes(x = x_coord, y = y_coord, image = image_path),
@@ -328,19 +406,36 @@ std_player_stats |>
 ```
 
 ```{r}
-# "gsanner", "aroy": cutters
-# "pjanas", "bmatzuka": handlers (or just greater thrower?)
+# "gsanner", "jbabbitt", "tbarbieri", "owatt: cutters
+# "pjanas", "bmatzuka", "aroy", "echartock", "lcomire", "rosgar": handlers (or just greater thrower?)
 # "jwilliams", "etaylor", "acoffin", "jkerr", "rbarker", "khenke", "tmonroe": hybrids 
 
+player_clusters <- as.factor(player_kmeans1$cluster)
+std_player_stats1 <- bind_cols(std_player_stats1, cluster = player_clusters)
+
 std_player_stats1 |>
-  filter(player %in% c("jwilliams", "etaylor", "acoffin", "jkerr", "rbarker", "khenke", "tmonroe", "gsanner", "aroy", "pjanas", "bmatzuka"))
+  filter(player %in% c("jwilliams", "etaylor", "acoffin", "jkerr", "rbarker", "khenke", "tmonroe", "gsanner", "aroy", "pjanas", "bmatzuka", "jbabbitt", "tbarbieri", "echartock", "lcomire", "rosgar", "owatt")) |>
+  select(player, avg_n_throw, avg_throw_distance, cluster)
+
+std_player_stats1 |>
+  filter(avg_n_throw <= 0 & avg_throw_distance >= 2) |>
+  select(player, avg_n_throw, avg_throw_distance, cluster) |>
+  mutate(med_1 = median(avg_n_throw),
+         med_2 = median(avg_throw_distance)) |>
+  arrange(desc(avg_throw_distance))
 
 img_data <- tibble(
   x_coord = 2.4130366,
   y_coord = 2.82300490,
   image_path = "~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/jwilliams_profile.jpg")
 
-img <- readJPEG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/jwilliams_profile.jpg")
+library(png)
+img_jwilliams <- readPNG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/img/jwilliams_profile.png")
+img_pjanas <- readPNG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/img/pjanas_profile.png")
+img_jbabbitt <- readPNG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/img/jbabbitt_profile.png")
+img_owatt <- readPNG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/img/owatt_profile.png")
+img_rkirkpatr <- readPNG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/img/rkirkpatr_profile.png")
+img_nhanson <- readPNG("~/Desktop/Carleton Docs/R/CMSAC2026/eda project/ufa-throwing-cmsacamp-2026/Du/img/nhanson_profile.png")
 ```
 
 
@@ -367,7 +462,7 @@ players_complete <- players_dist |>
   hclust(method = "complete")
 
 std_player_stats1 |>
-  mutate(cluster = as.factor(cutree(players_complete, k = 3))) |>
+  mutate(cluster = as.factor(cutree(players_complete, k = 5))) |>
   relocate(cluster) |>
   ggplot(aes(x = avg_n_throw, y = avg_throw_distance, color = cluster)) +
   geom_point() +
@@ -389,7 +484,7 @@ players_complete |>
         panel.grid = element_blank())
 ```
 
-## 3. Soft clustering with GMM 
+## 1. Soft clustering with GMM 
 
 ```{r}
 library(mclust)
@@ -405,6 +500,24 @@ summary(player_mclust)
 library(gt)
 library(broom)
 gt(tidy(player_mclust))
+```
+
+```{r}
+player_mclust |>
+  augment() |>
+  ggplot(aes(x = avg_n_throw, y = avg_throw_distance, color = .class, size = .uncertainty)) +
+  geom_point(alpha = 0.6) +
+  scale_color_colorblind() +
+  theme_minimal()
+```
+
+```{r}
+player_mclust |>
+  plot(what = "BIC",
+       legendArgs = list(x = "bottomright", ncol = 5))
+
+player_mclust |>
+  plot(what = "classification")
 ```
 
 
