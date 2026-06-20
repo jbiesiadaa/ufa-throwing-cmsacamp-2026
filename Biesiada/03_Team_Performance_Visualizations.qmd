@@ -341,12 +341,12 @@ plot_data |>
     locations = cells_column_labels()) |>
   
   cols_width(
-    logo           ~ px(45),
-    team           ~ px(150),
-    win_pct        ~ px(80),
-    goal_rate     ~ px(100),
-    turnover_rate ~ px(130),
-    plus_minus     ~ px(130)
+    logo           ~ px(35),
+    team           ~ px(110),
+    win_pct        ~ px(65),
+    goal_rate     ~ px(85),
+    turnover_rate ~ px(100),
+    plus_minus     ~ px(90)
   ) |>
   
   cols_align(
@@ -355,14 +355,14 @@ plot_data |>
   )|>
 
   tab_options(
-    table.font.size                   = 14,
-    heading.title.font.size           = 18,
-    heading.subtitle.font.size        = 12,
-    data_row.padding                  = px(5),
+    table.font.size                   = 11,
+    heading.title.font.size           = 15,
+    heading.subtitle.font.size        = 10,
+    data_row.padding                  = px(3),
     table.border.top.color            = "gray30",
     column_labels.border.bottom.color = "gray30",
     row.striping.include_table_body   = FALSE,
-    table.width                       = px(700)
+    table.width                       = px(485)
   )
 
 # Saving a table just use table_save <- plot_data 
