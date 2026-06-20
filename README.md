@@ -18,7 +18,7 @@
 
 ## Project Overview
 
-This project explores throwing and team performance patterns in the Ultimate Frisbee Association. The main goal is to understand what separates high-performing teams from the rest by analyzing scoring efficiency, turnover control, and overall playing style through data visualization and statistical analysis.
+This project explores throwing and team performance patterns in the Ultimate Frisbee Association. The main goal is to understand what separates high-performing teams from the rest by analyzing scoring efficiency, turnover rate, and overall playing style through data visualization and statistical analysis.
 
 ## Julia's Report
 
@@ -32,9 +32,5 @@ View the group project presentation here:
 
 [UFA Throwing CMSACamp 2026 Presentation](https://docs.google.com/presentation/d/1veFJ8hsu_2UlV3LRz6G_HatQsrVH5wUvZeeoUHaE7BY/edit?usp=sharing)
 
-## Repository Structure
 
-```text
-Biesiada/
-  03_Team_Performance_Visualizations.html
   03_Team_Performance_Visualizations.qmd
