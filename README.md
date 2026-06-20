@@ -31,6 +31,3 @@ View the full HTML report here:
 View the group project presentation here:
 
 [UFA Throwing CMSACamp 2026 Presentation](https://docs.google.com/presentation/d/1veFJ8hsu_2UlV3LRz6G_HatQsrVH5wUvZeeoUHaE7BY/edit?usp=sharing)
-
-
-  03_Team_Performance_Visualizations.qmd
